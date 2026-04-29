@@ -12,6 +12,18 @@ const attendanceSchema = new mongoose.Schema(
       ref: "Subject",
       required: true
     },
+    timetableId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Timetable"
+    },
+    classSectionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ClassSection"
+    },
+    dateKey: {
+      type: String,
+      trim: true
+    },
     subject: {
       type: String,
       required: true,
@@ -33,6 +45,17 @@ const attendanceSchema = new mongoose.Schema(
     }
   },
   { timestamps: true }
+);
+
+attendanceSchema.index(
+  { studentId: 1, timetableId: 1, dateKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      timetableId: { $exists: true },
+      dateKey: { $exists: true, $type: "string" }
+    }
+  }
 );
 
 export default mongoose.model("Attendance", attendanceSchema);

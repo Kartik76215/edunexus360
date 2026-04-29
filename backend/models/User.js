@@ -38,6 +38,13 @@ const userSchema = new mongoose.Schema({
     default: ""
   },
 
+  section: {
+    type: String,
+    default: "",
+    trim: true,
+    uppercase: true
+  },
+
   rollNumber: {
     type: String,
     default: "",

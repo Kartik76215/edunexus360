@@ -135,17 +135,18 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const captureFaceEmbeddingWithLiveness = async (videoEl, options = {}) => {
   const faceapi = await ensureFaceModels(options.modelPath || "/face-models");
-  const timeoutMs = Number(options.timeoutMs || 6500);
+  const timeoutMs = Number(options.timeoutMs || 4200);
   const startedAt = Date.now();
   const detectorOptions = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 224,
-    scoreThreshold: 0.5
+    inputSize: 160,
+    scoreThreshold: 0.4
   });
 
   let blinkCount = 0;
   let wasEyeClosed = false;
   let maxHeadTurn = 0;
   let latestEmbedding = null;
+  let stableFaceFrames = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
     const detection = await faceapi
@@ -155,6 +156,7 @@ export const captureFaceEmbeddingWithLiveness = async (videoEl, options = {}) =>
 
     if (detection?.descriptor) {
       latestEmbedding = Array.from(detection.descriptor);
+      stableFaceFrames += 1;
       const landmarks = detection.landmarks;
       const leftEAR = eyeAspectRatio(landmarks.getLeftEye());
       const rightEAR = eyeAspectRatio(landmarks.getRightEye());
@@ -169,19 +171,20 @@ export const captureFaceEmbeddingWithLiveness = async (videoEl, options = {}) =>
         wasEyeClosed = false;
       }
 
-      if (blinkCount >= 1 && maxHeadTurn >= 12) {
+      if (blinkCount >= 1 || maxHeadTurn >= 8 || stableFaceFrames >= 8) {
         return {
           embedding: latestEmbedding,
           liveness: {
             passed: true,
             blinkCount,
-            headTurnAngle: maxHeadTurn
+            headTurnAngle: maxHeadTurn,
+            stableFrames: stableFaceFrames
           }
         };
       }
     }
 
-    await sleep(120);
+    await sleep(80);
   }
 
   if (!latestEmbedding) {
@@ -191,9 +194,10 @@ export const captureFaceEmbeddingWithLiveness = async (videoEl, options = {}) =>
   return {
     embedding: latestEmbedding,
     liveness: {
-      passed: false,
+      passed: blinkCount >= 1 || maxHeadTurn >= 8 || stableFaceFrames >= 3,
       blinkCount,
-      headTurnAngle: maxHeadTurn
+      headTurnAngle: maxHeadTurn,
+      stableFrames: stableFaceFrames
     }
   };
 };
@@ -201,8 +205,8 @@ export const captureFaceEmbeddingWithLiveness = async (videoEl, options = {}) =>
 export const captureFaceEmbedding = async (videoEl, options = {}) => {
   const faceapi = await ensureFaceModels(options.modelPath || "/face-models");
   const detectorOptions = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 224,
-    scoreThreshold: 0.5
+    inputSize: 160,
+    scoreThreshold: 0.4
   });
 
   const detection = await faceapi
@@ -233,8 +237,8 @@ export const captureFaceEmbedding = async (videoEl, options = {}) => {
 export const detectFaceStatus = async (videoEl, options = {}) => {
   const faceapi = await ensureFaceModels(options.modelPath || "/face-models");
   const detectorOptions = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 224,
-    scoreThreshold: 0.5
+    inputSize: 160,
+    scoreThreshold: 0.4
   });
 
   const detection = await faceapi

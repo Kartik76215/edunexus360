@@ -12,8 +12,8 @@ const faceDataSchema = new mongoose.Schema(
       type: [[Number]],
       required: true,
       validate: {
-        validator: (value) => Array.isArray(value) && value.length >= 3 && value.length <= 10,
-        message: "Embeddings must contain 3 to 10 samples."
+        validator: (value) => Array.isArray(value) && value.length >= 10 && value.length <= 15,
+        message: "Embeddings must contain 10 to 15 samples."
       }
     },
     meanEmbedding: {

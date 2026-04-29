@@ -5,6 +5,7 @@ import AttendanceSession from "../models/AttendanceSession.js";
 import Enrollment from "../models/Enrollment.js";
 import FaceAttendanceLog from "../models/FaceAttendanceLog.js";
 import FaceData from "../models/FaceData.js";
+import Subject from "../models/Subject.js";
 import Timetable from "../models/Timetable.js";
 import User from "../models/User.js";
 import {
@@ -24,6 +25,18 @@ import {
 const router = express.Router();
 
 const toBool = (value) => String(value || "").toLowerCase() === "true";
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeSection = (value = "") =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^SECTION\s+/, "")
+    .replace(/^SEC\s+/, "")
+    .replace(/[^A-Z0-9]/g, "");
+const getSectionFromClassName = (name = "") => {
+  const match = String(name).match(/-([A-Z0-9]+)$/i);
+  return match ? normalizeSection(match[1]) : "";
+};
 
 const findActiveSession = async (timetableId, dateKey, now = new Date()) => {
   const session = await AttendanceSession.findOne({
@@ -35,17 +48,89 @@ const findActiveSession = async (timetableId, dateKey, now = new Date()) => {
   return null;
 };
 
+const normalizeCourse = (value) => String(value || "").trim().toLowerCase();
+
+const isStudentEligibleForSlot = async ({ studentId, slot, studentDoc = null }) => {
+  const enrollment = await Enrollment.findOne({
+    studentId,
+    classSectionId: slot.classSectionId,
+    status: "active"
+  }).select("_id");
+  if (enrollment) {
+    return { ok: true, mode: "enrollment" };
+  }
+
+  const student =
+    studentDoc ||
+    (await User.findById(studentId).select("_id course semester"));
+  if (!student) {
+    return { ok: false, message: "Student not found." };
+  }
+
+  let subjectCourse = normalizeCourse(slot?.subjectId?.course);
+  let subjectSemester = Number(slot?.subjectId?.semester || 0);
+  if (!subjectCourse || !subjectSemester) {
+    const subjectId =
+      typeof slot.subjectId === "object" && slot.subjectId?._id
+        ? slot.subjectId._id
+        : slot.subjectId;
+    if (mongoose.Types.ObjectId.isValid(String(subjectId || ""))) {
+      const subject = await Subject.findById(subjectId).select("course semester");
+      subjectCourse = normalizeCourse(subject?.course);
+      subjectSemester = Number(subject?.semester || 0);
+    }
+  }
+
+  const studentCourse = normalizeCourse(student.course);
+  const studentSemester = Number(student.semester || 0);
+  if (
+    studentCourse &&
+    studentSemester > 0 &&
+    subjectCourse &&
+    subjectSemester > 0 &&
+    studentCourse === subjectCourse &&
+    studentSemester === subjectSemester
+  ) {
+    return { ok: true, mode: "course_semester" };
+  }
+
+  return { ok: false, message: "Student is not enrolled in this class section." };
+};
+
 const findUserTimetablesForToday = async ({ role, userId }) => {
   const today = dayLabel(new Date());
   const filter = { dayOfWeek: today };
 
   if (role === "student") {
-    const enrollments = await Enrollment.find({ studentId: userId, status: "active" }).select(
-      "classSectionId"
-    );
+    const [enrollments, student] = await Promise.all([
+      Enrollment.find({ studentId: userId, status: "active" }).select("classSectionId"),
+      User.findById(userId).select("course semester")
+    ]);
     const classSectionIds = enrollments.map((row) => row.classSectionId);
-    if (classSectionIds.length === 0) return [];
-    filter.classSectionId = { $in: classSectionIds };
+    const courseRaw = String(student?.course || "").trim();
+    const course = normalizeCourse(courseRaw);
+    const semester = Number(student?.semester || 0);
+    let subjectIds = [];
+    if (course && semester > 0) {
+      const subjectRows = await Subject.find({
+        course: { $regex: `^${escapeRegex(courseRaw)}$`, $options: "i" },
+        semester
+      }).select("_id");
+      subjectIds = subjectRows.map((row) => row._id);
+    }
+
+    if (classSectionIds.length > 0 && subjectIds.length > 0) {
+      filter.$or = [
+        { classSectionId: { $in: classSectionIds } },
+        { subjectId: { $in: subjectIds } }
+      ];
+    } else if (classSectionIds.length > 0) {
+      filter.classSectionId = { $in: classSectionIds };
+    } else if (subjectIds.length > 0) {
+      filter.subjectId = { $in: subjectIds };
+    } else {
+      return [];
+    }
   } else if (role === "faculty") {
     filter.facultyId = userId;
   }
@@ -123,8 +208,8 @@ router.post("/face-enroll", async (req, res) => {
       return res.status(400).json({ message: "Valid userId is required." });
     }
 
-    if (!Array.isArray(embeddings) || embeddings.length < 3 || embeddings.length > 5) {
-      return res.status(400).json({ message: "Provide 3 to 5 embedding samples." });
+    if (!Array.isArray(embeddings) || embeddings.length < 10 || embeddings.length > 15) {
+      return res.status(400).json({ message: "Provide 10 to 15 embedding samples." });
     }
 
     const user = await User.findById(userId).select("_id role");
@@ -305,26 +390,55 @@ router.get("/attendance/live", async (req, res) => {
     }
     const dateKey = String(req.query.date || todayDateKey(new Date()));
 
-    const slot = await Timetable.findById(timetableId).populate("subjectId", "name");
+    const slot = await Timetable.findById(timetableId)
+      .populate("subjectId", "name course semester")
+      .populate("classSectionId", "name");
     if (!slot) return res.status(404).json({ message: "Timetable slot not found." });
 
-    const [students, logs] = await Promise.all([
-      Enrollment.find({ classSectionId: slot.classSectionId, status: "active" })
+    const [enrollments, logs] = await Promise.all([
+      Enrollment.find({ classSectionId: slot.classSectionId?._id || slot.classSectionId, status: "active" })
         .populate("studentId", "name email rollNumber universityRollNumber")
         .select("studentId"),
       FaceAttendanceLog.find({ timetableId: slot._id, dateKey })
     ]);
 
+    const enrolledStudents = enrollments.map((row) => row.studentId).filter(Boolean);
+    let matchingProfileStudents = [];
+    const course = normalizeCourse(slot.subjectId?.course);
+    const semester = Number(slot.subjectId?.semester || 0);
+    const section = getSectionFromClassName(slot.classSectionId?.name || "");
+    if (course && semester > 0) {
+      const profileFilter = {
+        role: "student",
+        course: { $regex: `^${escapeRegex(String(slot.subjectId.course || ""))}$`, $options: "i" },
+        semester
+      };
+      const profileRows = await User.find(profileFilter).select(
+        "_id name email rollNumber universityRollNumber section"
+      );
+      matchingProfileStudents = section
+        ? profileRows.filter((student) => normalizeSection(student.section) === section)
+        : profileRows;
+    }
+
+    const studentsById = new Map();
+    for (const student of [...enrolledStudents, ...matchingProfileStudents]) {
+      if (student?._id) studentsById.set(String(student._id), student);
+    }
+    const students = [...studentsById.values()].sort((a, b) =>
+      String(a.rollNumber || "").localeCompare(String(b.rollNumber || ""), undefined, { numeric: true })
+    );
+
     const presentSet = new Map(logs.map((log) => [String(log.studentId), log]));
-    const rows = students.map((row) => {
-      const studentId = row.studentId?._id;
-      const log = presentSet.get(String(studentId));
+    const rows = students.map((studentRow) => {
+      const studentId = studentRow?._id;
+      const log = presentSet.get(String(studentId || ""));
       return {
         studentId,
-        name: row.studentId?.name || "Student",
-        email: row.studentId?.email || "",
-        rollNumber: row.studentId?.rollNumber || "",
-        universityRollNumber: row.studentId?.universityRollNumber || "",
+        name: studentRow?.name || "Student",
+        email: studentRow?.email || "",
+        rollNumber: studentRow?.rollNumber || "",
+        universityRollNumber: studentRow?.universityRollNumber || "",
         status: log ? "present" : "absent",
         markedAt: log?.markedAt || null
       };
@@ -376,7 +490,7 @@ router.get("/attendance/status", async (req, res) => {
 
     if (mongoose.Types.ObjectId.isValid(String(timetableId || ""))) {
       slot = await Timetable.findById(timetableId)
-        .populate("subjectId", "name")
+        .populate("subjectId", "name course semester")
         .populate("facultyId", "name")
         .populate("classSectionId", "name");
     } else {
@@ -393,16 +507,11 @@ router.get("/attendance/status", async (req, res) => {
       });
     }
 
-    const enrollment = await Enrollment.findOne({
-      studentId,
-      classSectionId: slot.classSectionId,
-      status: "active"
-    }).select("_id");
-
-    if (!enrollment) {
+    const eligibility = await isStudentEligibleForSlot({ studentId, slot });
+    if (!eligibility.ok) {
       return res.json({
         canMark: false,
-        reason: "Student is not enrolled in this class section.",
+        reason: eligibility.message,
         alreadyMarked: false,
         faceEnrolled: Boolean(faceData),
         timetableId: slot._id
@@ -466,8 +575,8 @@ router.post("/mark-attendance", async (req, res) => {
     }
 
     const [student, slot, faceData] = await Promise.all([
-      User.findById(studentId).select("_id role"),
-      Timetable.findById(timetableId).populate("subjectId", "name"),
+      User.findById(studentId).select("_id role course semester"),
+      Timetable.findById(timetableId).populate("subjectId", "name course semester"),
       FaceData.findOne({ userId: studentId })
     ]);
 
@@ -477,13 +586,9 @@ router.post("/mark-attendance", async (req, res) => {
     if (!slot) return res.status(404).json({ message: "Timetable slot not found." });
     if (!faceData) return res.status(400).json({ message: "Face not enrolled for this student." });
 
-    const enrollment = await Enrollment.findOne({
-      studentId,
-      classSectionId: slot.classSectionId,
-      status: "active"
-    }).select("_id");
-    if (!enrollment) {
-      return res.status(403).json({ message: "Student is not enrolled in this class section." });
+    const eligibility = await isStudentEligibleForSlot({ studentId, slot, studentDoc: student });
+    if (!eligibility.ok) {
+      return res.status(403).json({ message: eligibility.message });
     }
 
     if (slot.dayOfWeek !== dayLabel(new Date())) {
@@ -578,14 +683,25 @@ router.post("/mark-attendance", async (req, res) => {
     });
 
     // Keep legacy attendance list in sync for existing reports and dashboards.
-    await Attendance.create({
-      studentId,
-      subjectId: slot.subjectId?._id || slot.subjectId,
-      subject: slot.subjectId?.name || "Unknown Subject",
-      status: "present",
-      teacherId: slot.facultyId,
-      date: now
-    });
+    await Attendance.findOneAndUpdate(
+      {
+        studentId,
+        timetableId,
+        dateKey
+      },
+      {
+        studentId,
+        timetableId,
+        classSectionId: slot.classSectionId,
+        subjectId: slot.subjectId?._id || slot.subjectId,
+        subject: slot.subjectId?.name || "Unknown Subject",
+        status: "present",
+        teacherId: slot.facultyId,
+        date: now,
+        dateKey
+      },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    );
 
     return res.status(201).json({
       message: "Attendance marked successfully.",

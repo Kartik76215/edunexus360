@@ -1,9 +1,75 @@
-﻿import express from "express";
+import express from "express";
 import mongoose from "mongoose";
+import ClassSection from "../models/ClassSection.js";
+import Department from "../models/Department.js";
+import Enrollment from "../models/Enrollment.js";
+import Semester from "../models/Semester.js";
 import User from "../models/User.js";
 import { hashPassword, toSafeUser } from "../utils/security.js";
 
 const router = express.Router();
+const escapeRegex = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeSection = (value = "") =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^SECTION\s+/, "")
+    .replace(/^SEC\s+/, "")
+    .replace(/[^A-Z0-9]/g, "");
+
+const findClassSectionForStudent = async ({ course, semester, section }) => {
+  const normalizedCourse = String(course || "").trim();
+  const normalizedSection = normalizeSection(section);
+  const semesterNumber = Number(semester || 0);
+
+  if (!normalizedCourse || !normalizedSection || semesterNumber <= 0) return null;
+
+  const [department, semesterDoc] = await Promise.all([
+    Department.findOne({
+      code: { $regex: `^${escapeRegex(normalizedCourse)}$`, $options: "i" }
+    }).select("_id"),
+    Semester.findOne({ number: semesterNumber }).sort({ createdAt: -1 }).select("_id")
+  ]);
+
+  if (!department || !semesterDoc) return null;
+
+  return ClassSection.findOne({
+    departmentId: department._id,
+    semesterId: semesterDoc._id,
+    name: {
+      $regex: `^${escapeRegex(normalizedCourse)}\\s+Sem\\s+${semesterNumber}-${escapeRegex(normalizedSection)}$`,
+      $options: "i"
+    }
+  }).select("_id");
+};
+
+const syncStudentEnrollment = async (student) => {
+  if (!student || student.role !== "student") return;
+
+  const classSection = await findClassSectionForStudent({
+    course: student.course,
+    semester: student.semester,
+    section: student.section
+  });
+
+  if (!classSection) return;
+
+  await Enrollment.updateMany(
+    { studentId: student._id, classSectionId: { $ne: classSection._id }, status: "active" },
+    { $set: { status: "inactive" } }
+  );
+
+  await Enrollment.findOneAndUpdate(
+    { studentId: student._id, classSectionId: classSection._id },
+    {
+      $set: {
+        status: "active",
+        enrolledOn: new Date()
+      }
+    },
+    { upsert: true, new: true, runValidators: true }
+  );
+};
 
 // Add new user (Admin adds student/faculty)
 router.post("/", async (req, res) => {
@@ -16,6 +82,7 @@ router.post("/", async (req, res) => {
       designation = "",
       subjects = [],
       course = "",
+      section = "",
       semester = 1,
       rollNumber = "",
       universityRollNumber = ""
@@ -23,6 +90,7 @@ router.post("/", async (req, res) => {
 
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
+    const normalizedSection = normalizeSection(section);
     const normalizedRoll = String(rollNumber || "").trim().toUpperCase();
     const normalizedUniversityRoll = String(universityRollNumber || "").trim().toUpperCase();
 
@@ -69,12 +137,14 @@ router.post("/", async (req, res) => {
       designation: String(designation),
       subjects: Array.isArray(subjects) ? subjects : [],
       course: String(course),
+      section: normalizedSection,
       semester: Number(semester) || 1,
       rollNumber: normalizedRoll,
       universityRollNumber: normalizedUniversityRoll
     });
 
     await user.save();
+    await syncStudentEnrollment(user);
 
     res.status(201).json({ message: "User added", user: toSafeUser(user) });
   } catch (error) {
@@ -121,7 +191,16 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid user id." });
     }
 
-    const allowed = ["name", "role", "designation", "course", "semester", "rollNumber", "universityRollNumber"];
+    const allowed = [
+      "name",
+      "role",
+      "designation",
+      "course",
+      "section",
+      "semester",
+      "rollNumber",
+      "universityRollNumber"
+    ];
     const updates = {};
 
     for (const key of allowed) {
@@ -133,6 +212,7 @@ router.put("/:id", async (req, res) => {
     if (typeof updates.name === "string") updates.name = updates.name.trim();
     if (typeof updates.designation === "string") updates.designation = updates.designation.trim();
     if (typeof updates.course === "string") updates.course = updates.course.trim();
+    if (typeof updates.section === "string") updates.section = normalizeSection(updates.section);
     if (typeof updates.rollNumber === "string") updates.rollNumber = updates.rollNumber.trim().toUpperCase();
     if (typeof updates.universityRollNumber === "string") {
       updates.universityRollNumber = updates.universityRollNumber.trim().toUpperCase();
@@ -187,6 +267,8 @@ router.put("/:id", async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
+    await syncStudentEnrollment(updated);
+
     res.json({ message: "User updated successfully", user: updated });
   } catch (error) {
     if (error?.code === 11000 && error?.keyPattern?.rollNumber) {
@@ -200,3 +282,5 @@ router.put("/:id", async (req, res) => {
 });
 
 export default router;
+
+

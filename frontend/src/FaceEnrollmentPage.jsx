@@ -9,6 +9,9 @@ import {
 } from "./lib/faceApiClient";
 import "./Dashboard.css";
 
+const MIN_FACE_SAMPLES = 10;
+const MAX_FACE_SAMPLES = 15;
+
 function FaceEnrollmentPage() {
   const [users, setUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -109,8 +112,8 @@ function FaceEnrollmentPage() {
       setError("Start camera first.");
       return;
     }
-    if (samples.length >= 5) {
-      setError("Maximum 5 samples allowed.");
+    if (samples.length >= MAX_FACE_SAMPLES) {
+      setError(`Maximum ${MAX_FACE_SAMPLES} samples allowed.`);
       return;
     }
 
@@ -148,8 +151,8 @@ function FaceEnrollmentPage() {
       setError("Select a user before submitting.");
       return;
     }
-    if (samples.length < 3 || samples.length > 5) {
-      setError("Capture 3 to 5 samples.");
+    if (samples.length < MIN_FACE_SAMPLES || samples.length > MAX_FACE_SAMPLES) {
+      setError(`Capture ${MIN_FACE_SAMPLES} to ${MAX_FACE_SAMPLES} samples.`);
       return;
     }
 
@@ -181,7 +184,7 @@ function FaceEnrollmentPage() {
       <article className="panel">
         <h2>Face Enrollment</h2>
         <p className="helper-text">
-          Dedicated enrollment page with live detection checks. No raw images are saved; only face embeddings.
+          Capture 10 to 15 clear samples from slightly different angles. No raw images are saved; only face embeddings.
         </p>
         <div className="form-grid">
           <select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)}>
@@ -202,7 +205,7 @@ function FaceEnrollmentPage() {
             className="primary-btn"
             type="button"
             onClick={onCaptureSample}
-            disabled={!cameraStarted || captureBusy || samples.length >= 5}
+            disabled={!cameraStarted || captureBusy || samples.length >= MAX_FACE_SAMPLES}
           >
             {captureBusy ? "Capturing..." : "Capture Sample"}
           </button>
@@ -239,13 +242,17 @@ function FaceEnrollmentPage() {
           </div>
           <div className="list-item">
             <strong>Captured Samples</strong>
-            <span>{samples.length}/5</span>
+            <span>{samples.length}/{MAX_FACE_SAMPLES}</span>
           </div>
         </div>
       </article>
 
       <article className="panel">
         <h3>Sample Quality</h3>
+        <p className="helper-text">
+          Recommended: 3 front-facing, 3 slight left, 3 slight right, 2 looking slightly up/down,
+          and the remaining samples with normal expression. Keep only one face in frame.
+        </p>
         <div className="list-wrap">
           {samples.length === 0 ? (
             <p>No samples yet.</p>

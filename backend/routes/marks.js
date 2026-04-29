@@ -17,7 +17,7 @@ const resolveSubjectForActor = async ({ teacherId, subjectId, subject }) => {
 
   const actor = await User.findById(teacherId).select("_id role");
   if (!actor) {
-    return { ok: false, status: 404, message: "Teacher/admin user not found." };
+    return { ok: false, status: 401, message: "Login session expired. Please login again." };
   }
 
   let resolvedSubject = null;

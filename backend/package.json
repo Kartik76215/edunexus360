@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
+    "dev": "node server.js",
     "seed:reset": "node scripts/resetAndSeedSampleData.js",
     "clear:data": "node scripts/clearData.js",
     "test": "echo \"No tests configured\""

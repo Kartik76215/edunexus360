@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
-import crypto from "node:crypto";
 import { hashPassword } from "../utils/security.js";
+import { todayDateKey } from "../utils/faceAttendance.js";
 
 import AcademicYear from "../models/AcademicYear.js";
 import AdmissionApplication from "../models/AdmissionApplication.js";
@@ -28,13 +28,149 @@ import Timetable from "../models/Timetable.js";
 import User from "../models/User.js";
 
 const mongoUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/edunexus360";
-const seedPasswords = {
-  admin: process.env.SEED_ADMIN_PASSWORD,
-  faculty: process.env.SEED_FACULTY_PASSWORD,
-  student: process.env.SEED_STUDENT_PASSWORD
+
+const PASSWORDS = {
+  admin: process.env.SEED_ADMIN_PASSWORD || "admin123",
+  faculty: process.env.SEED_FACULTY_PASSWORD || "faculty123",
+  student: process.env.SEED_STUDENT_PASSWORD || "student123"
 };
 
-const SECTION_LABELS = ["A", "B", "C", "D"];
+const MODELS_TO_CLEAR = [
+  Submission,
+  Assignment,
+  FaceAttendanceLog,
+  AttendanceSession,
+  FaceData,
+  Timetable,
+  Enrollment,
+  Attendance,
+  Marks,
+  Grade,
+  Exam,
+  Payment,
+  FeeInvoice,
+  SemesterFee,
+  Message,
+  Notice,
+  Payroll,
+  AdmissionApplication,
+  Subject,
+  ClassSection,
+  Semester,
+  AcademicYear,
+  Department,
+  User
+];
+
+const COURSES = [
+  {
+    code: "BCA",
+    departmentName: "Computer Applications",
+    feeBase: 22000,
+    subjects: {
+      1: [
+        "Programming Fundamentals",
+        "Digital Logic",
+        "Communication Skills",
+        "Computer Organization",
+        "Mathematics for Computing",
+        "Office Automation Lab"
+      ],
+      2: [
+        "Data Structures",
+        "Database Management Systems",
+        "Web Foundations",
+        "Object Oriented Programming",
+        "Discrete Mathematics",
+        "Database Lab"
+      ]
+    }
+  },
+  {
+    code: "BSC",
+    departmentName: "Science",
+    feeBase: 18000,
+    subjects: {
+      1: [
+        "Physics Mechanics",
+        "Chemistry Fundamentals",
+        "Mathematics I",
+        "Environmental Science",
+        "Scientific Communication",
+        "Physics Lab"
+      ],
+      2: [
+        "Electricity and Magnetism",
+        "Organic Chemistry",
+        "Mathematics II",
+        "Statistics Basics",
+        "Scientific Computing",
+        "Chemistry Lab"
+      ]
+    }
+  }
+];
+
+const FACULTY_SEED = [
+  ["Dr. Priya Sharma", "Assistant Professor", "priya.sharma@edunexus.com", 65000],
+  ["Prof. Karan Mehta", "Associate Professor", "karan.mehta@edunexus.com", 76000],
+  ["Dr. Neha Verma", "Assistant Professor", "neha.verma@edunexus.com", 64000],
+  ["Prof. Aman Gupta", "Senior Lecturer", "aman.gupta@edunexus.com", 59000],
+  ["Dr. Sonia Rao", "Assistant Professor", "sonia.rao@edunexus.com", 66000],
+  ["Prof. Rahul Jain", "Lecturer", "rahul.jain@edunexus.com", 54000],
+  ["Dr. Meenakshi Iyer", "Associate Professor", "meenakshi.iyer@edunexus.com", 78000],
+  ["Prof. Vikram Sethi", "Assistant Professor", "vikram.sethi@edunexus.com", 62000],
+  ["Dr. Farhan Ali", "Senior Lecturer", "farhan.ali@edunexus.com", 61000],
+  ["Prof. Kavita Menon", "Lecturer", "kavita.menon@edunexus.com", 55000],
+  ["Dr. Harsh Vardhan", "Assistant Professor", "harsh.vardhan@edunexus.com", 63000],
+  ["Prof. Ritu Malhotra", "Senior Lecturer", "ritu.malhotra@edunexus.com", 60000]
+];
+
+const STUDENT_NAMES = [
+  "Aarav Sharma",
+  "Aditi Patel",
+  "Kabir Singh",
+  "Meera Rao",
+  "Rohan Mehta",
+  "Siya Verma",
+  "Dev Nair",
+  "Nisha Jain",
+  "Ishaan Das",
+  "Kavya Iyer",
+  "Arjun Gupta",
+  "Diya Kapoor",
+  "Ved Joshi",
+  "Avni Reddy",
+  "Mihir Bose",
+  "Tanvi Khan",
+  "Shaurya Saxena",
+  "Riya Chopra",
+  "Neel Malhotra",
+  "Zoya Mishra",
+  "Pranav Rao",
+  "Saanvi Nair",
+  "Eshan Jain",
+  "Ira Sharma",
+  "Krish Patel",
+  "Ananya Singh",
+  "Vivaan Das",
+  "Naina Iyer",
+  "Yash Mehta",
+  "Nitya Verma",
+  "Reyansh Gupta",
+  "Myra Kapoor",
+  "Atharv Joshi",
+  "Anika Reddy",
+  "Dhruv Bose",
+  "Sara Khan",
+  "Rudra Saxena",
+  "Kiara Chopra",
+  "Om Malhotra",
+  "Tara Mishra"
+];
+
+const SECTIONS = ["A", "B"];
+const SEMESTERS = [1, 2];
 const STUDENTS_PER_SECTION = 20;
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const TIME_SLOTS = [
@@ -46,247 +182,70 @@ const TIME_SLOTS = [
   ["15:00", "16:00"]
 ];
 
-const COURSE_CONFIGS = [
-  {
-    code: "BCA",
-    departmentName: "Computer Applications",
-    departmentCode: "BCA",
-    feeBase: 28000,
-    subjects: {
-      1: [
-        "Programming Fundamentals",
-        "Digital Logic",
-        "Computer Organization",
-        "Business Communication",
-        "Mathematics for Computing"
-      ],
-      2: [
-        "Data Structures",
-        "Database Management Systems",
-        "Object Oriented Programming",
-        "Web Design",
-        "Discrete Mathematics"
-      ],
-      3: [
-        "Operating Systems",
-        "Computer Networks",
-        "Software Engineering",
-        "Java Programming",
-        "Data Analytics Basics"
-      ]
-    }
-  },
-  {
-    code: "BSC",
-    departmentName: "Bachelor of Science",
-    departmentCode: "BSC",
-    feeBase: 26000,
-    subjects: {
-      1: [
-        "Physics Mechanics",
-        "Chemistry Fundamentals",
-        "Mathematics I",
-        "Environmental Science",
-        "Computer Fundamentals"
-      ],
-      2: [
-        "Electricity and Magnetism",
-        "Organic Chemistry",
-        "Mathematics II",
-        "Scientific Computing",
-        "Statistics Basics"
-      ],
-      3: [
-        "Thermodynamics",
-        "Inorganic Chemistry",
-        "Linear Algebra",
-        "Research Methodology",
-        "Data Handling Lab"
-      ]
-    }
-  }
-];
+const asDate = (value) => new Date(`${value}T00:00:00.000Z`);
+const sectionKey = (course, semester, section) => `${course}-S${semester}-${section}`;
+const courseSemesterKey = (course, semester) => `${course}-S${semester}`;
 
-const FACULTY_PROFILES = [
-  ["Dr. Priya Sharma", "Assistant Professor", 65000],
-  ["Prof. Karan Mehta", "Associate Professor", 78000],
-  ["Dr. Neha Verma", "Assistant Professor", 64000],
-  ["Prof. Aman Gupta", "Senior Lecturer", 59000],
-  ["Dr. Sonia Rao", "Assistant Professor", 66000],
-  ["Prof. Rahul Jain", "Lecturer", 54000],
-  ["Dr. Meenakshi Iyer", "Associate Professor", 76000],
-  ["Prof. Vikram Sethi", "Assistant Professor", 62000],
-  ["Dr. Farhan Ali", "Senior Lecturer", 61000],
-  ["Prof. Kavita Menon", "Lecturer", 55000]
-];
+const formatTime = (date) =>
+  `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
-const FIRST_NAMES = [
-  "Aarav",
-  "Aditi",
-  "Aditya",
-  "Ananya",
-  "Arjun",
-  "Avni",
-  "Dev",
-  "Diya",
-  "Eshan",
-  "Ira",
-  "Kabir",
-  "Kavya",
-  "Krish",
-  "Meera",
-  "Mihir",
-  "Naina",
-  "Neel",
-  "Nisha",
-  "Pranav",
-  "Riya",
-  "Rohan",
-  "Saanvi",
-  "Shaurya",
-  "Siya",
-  "Tanvi",
-  "Ved",
-  "Vivaan",
-  "Yash",
-  "Zoya",
-  "Ishaan"
-];
+const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
 
-const LAST_NAMES = [
-  "Sharma",
-  "Patel",
-  "Singh",
-  "Gupta",
-  "Verma",
-  "Rao",
-  "Mehta",
-  "Nair",
-  "Das",
-  "Joshi",
-  "Kapoor",
-  "Khan",
-  "Mishra",
-  "Bose",
-  "Jain",
-  "Reddy",
-  "Saxena",
-  "Malhotra",
-  "Chopra",
-  "Iyer"
-];
+const getStudentName = (index) => {
+  const baseName = STUDENT_NAMES[index % STUDENT_NAMES.length];
+  const batch = Math.floor(index / STUDENT_NAMES.length) + 1;
+  return batch === 1 ? baseName : `${baseName} ${batch}`;
+};
+
+const getLiveSlot = () => {
+  const now = new Date();
+  const start = new Date(now.getTime() - 5 * 60 * 1000);
+  const end = new Date(now.getTime() + 55 * 60 * 1000);
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][now.getDay()];
+
+  return {
+    dayOfWeek: day === "Sun" ? "Mon" : day,
+    startTime: formatTime(start),
+    endTime: formatTime(end)
+  };
+};
 
 const clearAllData = async () => {
-  const models = [
-    Submission,
-    Assignment,
-    FaceAttendanceLog,
-    AttendanceSession,
-    FaceData,
-    Timetable,
-    Enrollment,
-    Attendance,
-    Marks,
-    Grade,
-    Exam,
-    Payment,
-    FeeInvoice,
-    SemesterFee,
-    Message,
-    Notice,
-    Payroll,
-    AdmissionApplication,
-    Subject,
-    ClassSection,
-    Semester,
-    AcademicYear,
-    Department,
-    User
-  ];
-
-  for (const model of models) {
+  for (const model of MODELS_TO_CLEAR) {
     await model.deleteMany({});
   }
 };
-
-const asDate = (value) => new Date(`${value}T00:00:00.000Z`);
-
-const keyFor = (course, semester, section = "") =>
-  [course, `S${semester}`, section].filter(Boolean).join("-");
-
-const getStudentName = (index) => {
-  const first = FIRST_NAMES[index % FIRST_NAMES.length];
-  const last = LAST_NAMES[Math.floor(index / FIRST_NAMES.length) % LAST_NAMES.length];
-  return `${first} ${last}`;
-};
-
-const getSemesterDates = (semester) => {
-  const ranges = {
-    1: ["2026-04-01", "2026-07-31"],
-    2: ["2026-08-01", "2026-11-30"],
-    3: ["2026-12-01", "2027-03-31"]
-  };
-  return ranges[semester];
-};
-
-const getAttendanceDates = (semester) => {
-  const dates = {
-    1: ["2026-04-08", "2026-04-15"],
-    2: ["2026-08-05", "2026-08-12"],
-    3: ["2026-12-09", "2026-12-16"]
-  };
-  return dates[semester];
-};
-
-const getDueDate = (semester, offsetDays = 0) => {
-  const baseDates = {
-    1: "2026-05-20",
-    2: "2026-09-20",
-    3: "2027-01-20"
-  };
-  const date = asDate(baseDates[semester]);
-  date.setUTCDate(date.getUTCDate() + offsetDays);
-  return date;
-};
-
-const buildFacultyDocs = (password) =>
-  FACULTY_PROFILES.map(([name, designation]) => {
-    const emailName = name
-      .toLowerCase()
-      .replace(/^(dr|prof)\.?\s+/, "")
-      .replace(/\s+/g, ".");
-
-    return {
-      name,
-      email: `${emailName}@edunexus.com`,
-      password,
-      role: "faculty",
-      designation,
-      subjects: []
-    };
-  });
 
 const seed = async () => {
   await mongoose.connect(mongoUri);
   console.log(`Connected to ${mongoUri}`);
 
   await clearAllData();
-  console.log("Existing data cleared.");
+  console.log("All previous ERP data cleared.");
 
   const [adminPassword, facultyPassword, studentPassword] = await Promise.all([
-    hashPassword(seedPasswords.admin || crypto.randomUUID()),
-    hashPassword(seedPasswords.faculty || crypto.randomUUID()),
-    hashPassword(seedPasswords.student || crypto.randomUUID())
+    hashPassword(PASSWORDS.admin),
+    hashPassword(PASSWORDS.faculty),
+    hashPassword(PASSWORDS.student)
   ]);
 
   const admin = await User.create({
-    name: "Admin User",
+    name: "System Admin",
     email: "admin@edunexus.com",
     password: adminPassword,
     role: "admin"
   });
 
-  const faculties = await User.insertMany(buildFacultyDocs(facultyPassword));
+  const faculty = await User.insertMany(
+    FACULTY_SEED.map(([name, designation, email]) => ({
+      name,
+      email,
+      password: facultyPassword,
+      role: "faculty",
+      designation,
+      subjects: []
+    }))
+  );
 
   const academicYear = await AcademicYear.create({
     name: "2026-27",
@@ -296,212 +255,221 @@ const seed = async () => {
   });
 
   const semesters = await Semester.insertMany(
-    [1, 2, 3].map((number) => {
-      const [startDate, endDate] = getSemesterDates(number);
-      return {
-        name: `Semester ${number}`,
-        number,
-        academicYearId: academicYear._id,
-        startDate: asDate(startDate),
-        endDate: asDate(endDate)
-      };
-    })
+    SEMESTERS.map((number) => ({
+      name: `Semester ${number}`,
+      number,
+      academicYearId: academicYear._id,
+      startDate: number === 1 ? asDate("2026-04-01") : asDate("2026-08-01"),
+      endDate: number === 1 ? asDate("2026-07-31") : asDate("2026-11-30")
+    }))
   );
-
   const semesterByNumber = new Map(semesters.map((semester) => [semester.number, semester]));
 
   const departments = await Department.insertMany(
-    COURSE_CONFIGS.map((course) => ({
+    COURSES.map((course) => ({
       name: course.departmentName,
-      code: course.departmentCode
+      code: course.code
     }))
   );
-  const departmentByCourse = new Map(
-    COURSE_CONFIGS.map((course, index) => [course.code, departments[index]])
+  const departmentByCode = new Map(departments.map((department) => [department.code, department]));
+
+  const sectionSeed = COURSES.flatMap((course, courseIndex) =>
+    SEMESTERS.flatMap((semester) =>
+      SECTIONS.map((section, sectionIndex) => ({
+        course: course.code,
+        semester,
+        section,
+        name: `${course.code} Sem ${semester}-${section}`,
+        coordinatorIndex: (courseIndex * 4 + (semester - 1) * 2 + sectionIndex) % faculty.length
+      }))
+    )
   );
 
-  const sectionDocs = [];
-  const sectionMeta = [];
-  for (const course of COURSE_CONFIGS) {
-    for (const semester of [1, 2, 3]) {
-      SECTION_LABELS.forEach((section, sectionIndex) => {
-        sectionMeta.push({ course: course.code, semester, section, sectionIndex });
-        sectionDocs.push({
-          name: `${course.code} Sem ${semester}-${section}`,
-          departmentId: departmentByCourse.get(course.code)._id,
-          semesterId: semesterByNumber.get(semester)._id,
-          coordinatorId: faculties[(semester + sectionIndex) % faculties.length]._id,
-          capacity: STUDENTS_PER_SECTION
-        });
-      });
-    }
-  }
-
-  const classSections = await ClassSection.insertMany(sectionDocs);
+  const classSections = await ClassSection.insertMany(
+    sectionSeed.map((row) => ({
+      name: row.name,
+      departmentId: departmentByCode.get(row.course)._id,
+      semesterId: semesterByNumber.get(row.semester)._id,
+      coordinatorId: faculty[row.coordinatorIndex]._id,
+      capacity: 60
+    }))
+  );
   const sectionByKey = new Map(
     classSections.map((section, index) => {
-      const meta = sectionMeta[index];
-      return [keyFor(meta.course, meta.semester, meta.section), { ...meta, doc: section }];
+      const row = sectionSeed[index];
+      return [sectionKey(row.course, row.semester, row.section), { ...row, doc: section }];
     })
   );
 
-  const subjectDocs = [];
-  const subjectMeta = [];
-  let subjectCursor = 0;
-  for (const course of COURSE_CONFIGS) {
-    for (const semester of [1, 2, 3]) {
+  const subjectSeed = [];
+  let subjectFacultyIndex = 0;
+  for (const course of COURSES) {
+    for (const semester of SEMESTERS) {
       for (const name of course.subjects[semester]) {
-        const faculty = faculties[subjectCursor % faculties.length];
-        subjectMeta.push({ course: course.code, semester, facultyId: faculty._id, name });
-        subjectDocs.push({
+        subjectSeed.push({
           course: course.code,
           semester,
           name,
-          facultyId: faculty._id
+          facultyIndex: subjectFacultyIndex % faculty.length
         });
-        subjectCursor += 1;
+        subjectFacultyIndex += 1;
       }
     }
   }
 
-  const subjects = await Subject.insertMany(subjectDocs);
+  const subjects = await Subject.insertMany(
+    subjectSeed.map((row) => ({
+      course: row.course,
+      semester: row.semester,
+      name: row.name,
+      facultyId: faculty[row.facultyIndex]._id
+    }))
+  );
   const subjectsByCourseSemester = new Map();
-  subjects.forEach((subject, index) => {
-    const meta = subjectMeta[index];
-    const mapKey = keyFor(meta.course, meta.semester);
-    const rows = subjectsByCourseSemester.get(mapKey) || [];
-    rows.push(subject);
-    subjectsByCourseSemester.set(mapKey, rows);
+  subjects.forEach((subject) => {
+    const key = courseSemesterKey(subject.course, subject.semester);
+    subjectsByCourseSemester.set(key, [...(subjectsByCourseSemester.get(key) || []), subject]);
   });
 
   await Promise.all(
-    faculties.map((faculty) => {
+    faculty.map((member) => {
       const assignedSubjects = subjects
-        .filter((subject) => String(subject.facultyId) === String(faculty._id))
+        .filter((subject) => String(subject.facultyId) === String(member._id))
         .map((subject) => `${subject.course} Sem ${subject.semester}: ${subject.name}`);
-      return User.updateOne({ _id: faculty._id }, { $set: { subjects: assignedSubjects } });
+      return User.updateOne({ _id: member._id }, { $set: { subjects: assignedSubjects } });
     })
   );
 
-  const timetableDocs = [];
-  for (const sectionRow of sectionByKey.values()) {
-    const sectionSubjects = subjectsByCourseSemester.get(
-      keyFor(sectionRow.course, sectionRow.semester)
-    );
-
-    sectionSubjects.forEach((subject, subjectIndex) => {
-      const [startTime, endTime] = TIME_SLOTS[
-        (subjectIndex + sectionRow.sectionIndex) % TIME_SLOTS.length
-      ];
-      timetableDocs.push({
-        classSectionId: sectionRow.doc._id,
-        subjectId: subject._id,
-        facultyId: subject.facultyId,
-        dayOfWeek: DAYS[(subjectIndex + sectionRow.semester + sectionRow.sectionIndex) % DAYS.length],
-        startTime,
-        endTime,
-        room: `${sectionRow.course}-${sectionRow.semester}${sectionRow.section}`
-      });
-    });
-  }
-  await Timetable.insertMany(timetableDocs);
-
   const studentDocs = [];
   const studentMeta = [];
-  let globalStudentIndex = 0;
-  for (const sectionRow of sectionByKey.values()) {
-    for (let localIndex = 1; localIndex <= STUDENTS_PER_SECTION; localIndex += 1) {
-      const rollNumber = `${sectionRow.course}-S${sectionRow.semester}-${String(
-        sectionRow.sectionIndex * STUDENTS_PER_SECTION + localIndex
-      ).padStart(3, "0")}`;
-      const email = `${sectionRow.course.toLowerCase()}.s${sectionRow.semester}.${sectionRow.section.toLowerCase()}.${String(
-        localIndex
-      ).padStart(2, "0")}@edunexus.com`;
-      const name = getStudentName(globalStudentIndex);
+  let studentIndex = 0;
+  for (const course of COURSES) {
+    for (const semester of SEMESTERS) {
+      for (const section of SECTIONS) {
+        for (let roll = 1; roll <= STUDENTS_PER_SECTION; roll += 1) {
+          const name = getStudentName(studentIndex);
+          const rollNumber = `${section}${String(roll).padStart(3, "0")}`;
+          const universityRollNumber = `UNI-${course.code}-2026-S${semester}${section}-${String(roll).padStart(3, "0")}`;
+          const email = `${slug(name)}.${course.code.toLowerCase()}s${semester}${section.toLowerCase()}.${String(
+            roll
+          ).padStart(2, "0")}@edunexus.com`;
 
-      studentMeta.push({
-        course: sectionRow.course,
-        semester: sectionRow.semester,
-        section: sectionRow.section,
-        sectionKey: keyFor(sectionRow.course, sectionRow.semester, sectionRow.section),
-        localIndex,
-        globalIndex: globalStudentIndex
-      });
-      studentDocs.push({
-        name,
-        email,
-        password: studentPassword,
-        role: "student",
-        course: sectionRow.course,
-        semester: sectionRow.semester,
-        rollNumber,
-        universityRollNumber: `EDU-2026-${rollNumber}`
-      });
-      globalStudentIndex += 1;
+          studentDocs.push({
+            name,
+            email,
+            password: studentPassword,
+            role: "student",
+            course: course.code,
+            semester,
+            section,
+            rollNumber,
+            universityRollNumber
+          });
+          studentMeta.push({ course: course.code, semester, section });
+          studentIndex += 1;
+        }
+      }
     }
   }
 
   const students = await User.insertMany(studentDocs);
-  const studentRows = students.map((student, index) => ({ user: student, ...studentMeta[index] }));
+  const studentRows = students.map((student, index) => {
+    const meta = studentMeta[index];
+    return {
+      user: student,
+      ...meta,
+      classSection: sectionByKey.get(sectionKey(meta.course, meta.semester, meta.section)).doc
+    };
+  });
 
   await Enrollment.insertMany(
     studentRows.map((row) => ({
       studentId: row.user._id,
-      classSectionId: sectionByKey.get(row.sectionKey).doc._id,
+      classSectionId: row.classSection._id,
       status: "active",
       enrolledOn: asDate("2026-04-01")
     }))
   );
 
+  const liveSlot = getLiveSlot();
+  const timetableDocs = [];
+  let timetableCursor = 0;
+
+  for (const sectionRow of sectionByKey.values()) {
+    const sectionSubjects = subjectsByCourseSemester.get(
+      courseSemesterKey(sectionRow.course, sectionRow.semester)
+    );
+
+    sectionSubjects.forEach((subject, subjectIndex) => {
+      [0, 1].forEach((weeklyRepeat) => {
+        const useLiveSlot =
+          sectionRow.course === "BCA" &&
+          sectionRow.semester === 1 &&
+          sectionRow.section === "A" &&
+          subjectIndex === 0 &&
+          weeklyRepeat === 0;
+        const slotIndex = (subjectIndex + timetableCursor + weeklyRepeat * 2) % TIME_SLOTS.length;
+        const [startTime, endTime] = TIME_SLOTS[slotIndex];
+
+        timetableDocs.push({
+          classSectionId: sectionRow.doc._id,
+          subjectId: subject._id,
+          facultyId: subject.facultyId,
+          dayOfWeek: useLiveSlot
+            ? liveSlot.dayOfWeek
+            : DAYS[(subjectIndex + timetableCursor + weeklyRepeat * 3) % DAYS.length],
+          startTime: useLiveSlot ? liveSlot.startTime : startTime,
+          endTime: useLiveSlot ? liveSlot.endTime : endTime,
+          room: `${sectionRow.course}-${sectionRow.semester}${sectionRow.section}-${subjectIndex + 1}`
+        });
+      });
+    });
+    timetableCursor += 1;
+  }
+
+  const timetables = await Timetable.insertMany(timetableDocs);
+  const timetableBySectionSubject = new Map(
+    timetables.map((slot) => [`${slot.classSectionId}-${slot.subjectId}`, slot])
+  );
+
   const semesterFees = await SemesterFee.insertMany(
-    COURSE_CONFIGS.flatMap((course) =>
-      [1, 2, 3].map((semester) => ({
+    COURSES.flatMap((course) =>
+      SEMESTERS.map((semester) => ({
         title: `${course.code} Semester ${semester} Tuition Fee`,
         course: course.code,
         semester,
-        amount: course.feeBase + semester * 1000,
+        amount: course.feeBase + semester * 2000,
         dueDaysAfterIssue: 30,
         active: true
       }))
     )
   );
-
   const feeByCourseSemester = new Map(
-    semesterFees.map((fee) => [keyFor(fee.course, fee.semester), fee])
+    semesterFees.map((fee) => [courseSemesterKey(fee.course, fee.semester), fee])
   );
 
-  const invoiceDocs = studentRows.map((row) => {
-    const fee = feeByCourseSemester.get(keyFor(row.course, row.semester));
-    const statusCycle = row.globalIndex % 4;
-    const paidAmount =
-      statusCycle === 0 ? fee.amount : statusCycle === 1 ? Math.round(fee.amount * 0.45) : 0;
-    const status =
-      statusCycle === 0
-        ? "paid"
-        : statusCycle === 1
-          ? "partially_paid"
-          : statusCycle === 2
-            ? "pending"
-            : "overdue";
+  const invoices = await FeeInvoice.insertMany(
+    studentRows.map((row, index) => {
+      const fee = feeByCourseSemester.get(courseSemesterKey(row.course, row.semester));
+      const status = ["pending", "partially_paid", "paid", "overdue"][index % 4];
+      const paidAmount =
+        status === "paid" ? fee.amount : status === "partially_paid" ? Math.round(fee.amount * 0.45) : 0;
 
-    return {
-      studentId: row.user._id,
-      semesterFeeId: fee._id,
-      title: fee.title,
-      invoiceNumber: `INV-${row.course}-S${row.semester}-${String(row.globalIndex + 1).padStart(
-        4,
-        "0"
-      )}`,
-      course: row.course,
-      semester: row.semester,
-      amount: fee.amount,
-      paidAmount,
-      dueDate: status === "overdue" ? asDate("2026-04-20") : getDueDate(row.semester, 10),
-      status
-    };
-  });
+      return {
+        studentId: row.user._id,
+        semesterFeeId: fee._id,
+        title: fee.title,
+        invoiceNumber: `INV-2026-${String(index + 1).padStart(5, "0")}`,
+        course: row.course,
+        semester: row.semester,
+        amount: fee.amount,
+        paidAmount,
+        dueDate: status === "overdue" ? asDate("2026-04-15") : asDate("2026-05-25"),
+        status
+      };
+    })
+  );
 
-  const invoices = await FeeInvoice.insertMany(invoiceDocs);
   await Payment.insertMany(
     invoices
       .filter((invoice) => invoice.paidAmount > 0)
@@ -509,33 +477,55 @@ const seed = async () => {
         feeInvoiceId: invoice._id,
         studentId: invoice.studentId,
         amount: invoice.paidAmount,
-        paymentDate: asDate(index % 2 === 0 ? "2026-04-18" : "2026-04-22"),
-        method: ["upi", "card", "bank"][index % 3],
-        transactionRef: `PAY-${String(index + 1).padStart(5, "0")}`
+        paymentDate: asDate(index % 2 === 0 ? "2026-04-20" : "2026-04-25"),
+        method: ["upi", "card", "bank", "cash"][index % 4],
+        transactionRef: `PAY-2026-${String(index + 1).padStart(5, "0")}`
       }))
   );
 
   const attendanceDocs = [];
   const marksDocs = [];
   for (const row of studentRows) {
-    const sectionSubjects = subjectsByCourseSemester.get(keyFor(row.course, row.semester));
+    const sectionSubjects = subjectsByCourseSemester.get(courseSemesterKey(row.course, row.semester));
+
     sectionSubjects.forEach((subject, subjectIndex) => {
+      const numericRoll = Number(String(row.user.rollNumber || "").replace(/\D/g, ""));
+      const isLowAttendanceStudent = numericRoll > 0 && numericRoll % 5 === 0;
+      const isBorderlineAttendanceStudent = numericRoll > 0 && numericRoll % 7 === 0;
+
       marksDocs.push({
         studentId: row.user._id,
         subjectId: subject._id,
         subject: subject.name,
-        marks: 55 + ((row.globalIndex * 7 + subjectIndex * 11 + row.semester * 3) % 41),
+        marks: 52 + ((row.user.name.length * 3 + subjectIndex * 13) % 47),
         teacherId: subject.facultyId
       });
 
-      getAttendanceDates(row.semester).forEach((date, sessionIndex) => {
+      ["2026-04-22", "2026-04-24", "2026-04-27"].forEach((date, dateIndex) => {
+        const dateValue = asDate(date);
+        const timetable = timetableBySectionSubject.get(`${row.classSection._id}-${subject._id}`);
+        const status = isLowAttendanceStudent
+          ? subjectIndex < 4 || dateIndex < 2
+            ? "absent"
+            : "present"
+          : isBorderlineAttendanceStudent
+            ? subjectIndex < 2 && dateIndex < 2
+              ? "absent"
+              : "present"
+            : (row.user.name.length + subjectIndex + dateIndex) % 8 === 0
+              ? "absent"
+              : "present";
+
         attendanceDocs.push({
           studentId: row.user._id,
           subjectId: subject._id,
+          timetableId: timetable?._id,
+          classSectionId: row.classSection._id,
+          dateKey: todayDateKey(dateValue),
           subject: subject.name,
-          status: (row.globalIndex + subjectIndex + sessionIndex) % 9 === 0 ? "absent" : "present",
+          status,
           teacherId: subject.facultyId,
-          date: asDate(date)
+          date: dateValue
         });
       });
     });
@@ -543,123 +533,111 @@ const seed = async () => {
   await Attendance.insertMany(attendanceDocs);
   await Marks.insertMany(marksDocs);
 
-  const assignmentDocs = [];
-  const assignmentMeta = [];
-  for (const sectionRow of sectionByKey.values()) {
-    const sectionSubjects = subjectsByCourseSemester
-      .get(keyFor(sectionRow.course, sectionRow.semester))
-      .slice(0, 2);
-
-    sectionSubjects.forEach((subject, subjectIndex) => {
-      assignmentMeta.push({
-        sectionKey: keyFor(sectionRow.course, sectionRow.semester, sectionRow.section),
-        subjectIndex
-      });
-      assignmentDocs.push({
-        title: `${subject.name} Assignment ${subjectIndex + 1}`,
-        description: `Complete the practical and theory questions for ${subject.name}.`,
+  const assignments = await Assignment.insertMany(
+    [...sectionByKey.values()].map((sectionRow, index) => {
+      const subject = subjectsByCourseSemester.get(courseSemesterKey(sectionRow.course, sectionRow.semester))[0];
+      return {
+        title: `${sectionRow.name} Practice Assignment`,
+        description: `Complete the practice questions for ${subject.name}.`,
         subjectId: subject._id,
         facultyId: subject.facultyId,
         classSectionId: sectionRow.doc._id,
-        dueDate: getDueDate(sectionRow.semester, subjectIndex * 7),
+        dueDate: asDate(index % 2 === 0 ? "2026-05-05" : "2026-05-12"),
         attachmentUrl: ""
-      });
-    });
-  }
-  const assignments = await Assignment.insertMany(assignmentDocs);
+      };
+    })
+  );
 
   const submissionDocs = [];
-  assignments.forEach((assignment, index) => {
-    const meta = assignmentMeta[index];
-    const sectionStudents = studentRows.filter((row) => row.sectionKey === meta.sectionKey);
-    sectionStudents.slice(0, 14).forEach((row) => {
+  assignments.forEach((assignment) => {
+    const sectionStudents = studentRows.filter(
+      (row) => String(row.classSection._id) === String(assignment.classSectionId)
+    );
+    sectionStudents.slice(0, 3).forEach((row, index) => {
       submissionDocs.push({
         assignmentId: assignment._id,
         studentId: row.user._id,
-        content: `Submitted work by ${row.user.name} for ${assignment.title}.`,
-        submittedAt: getDueDate(row.semester, -2 + (row.localIndex % 3)),
-        grade: 60 + ((row.globalIndex + meta.subjectIndex * 9) % 36),
-        feedback: row.localIndex % 5 === 0 ? "Good effort. Add more examples." : "Checked."
+        content: `Submitted sample work by ${row.user.name}.`,
+        submittedAt: asDate("2026-04-28"),
+        grade: 70 + index * 6,
+        feedback: index === 2 ? "Good attempt, add more explanation." : "Checked."
       });
     });
   });
   await Submission.insertMany(submissionDocs);
 
-  const examDocs = [];
-  const examMeta = [];
-  for (const sectionRow of sectionByKey.values()) {
-    const sectionSubjects = subjectsByCourseSemester.get(
-      keyFor(sectionRow.course, sectionRow.semester)
-    );
-    sectionSubjects.forEach((subject, subjectIndex) => {
-      examMeta.push({
-        sectionKey: keyFor(sectionRow.course, sectionRow.semester, sectionRow.section),
-        subjectIndex
-      });
-      examDocs.push({
-        name: `${subject.name} Mid Term`,
+  const exams = await Exam.insertMany(
+    [...sectionByKey.values()].map((sectionRow, index) => {
+      const subject = subjectsByCourseSemester.get(courseSemesterKey(sectionRow.course, sectionRow.semester))[1];
+      return {
+        name: `${sectionRow.name} Unit Test`,
         subjectId: subject._id,
         classSectionId: sectionRow.doc._id,
-        examDate: getDueDate(sectionRow.semester, 18 + subjectIndex),
+        examDate: asDate(index % 2 === 0 ? "2026-05-15" : "2026-05-18"),
         totalMarks: 50,
-        type: "midterm"
-      });
-    });
-  }
-  const exams = await Exam.insertMany(examDocs);
+        type: "quiz"
+      };
+    })
+  );
 
   const gradeDocs = [];
-  exams.forEach((exam, index) => {
-    const meta = examMeta[index];
-    const sectionStudents = studentRows.filter((row) => row.sectionKey === meta.sectionKey);
-    sectionStudents.forEach((row) => {
+  exams.forEach((exam) => {
+    const sectionStudents = studentRows.filter(
+      (row) => String(row.classSection._id) === String(exam.classSectionId)
+    );
+    sectionStudents.forEach((row, index) => {
       gradeDocs.push({
         examId: exam._id,
         studentId: row.user._id,
-        marksObtained: 26 + ((row.globalIndex * 5 + meta.subjectIndex * 3) % 23),
-        remarks: row.localIndex % 6 === 0 ? "Needs revision" : "Satisfactory"
+        marksObtained: 28 + index * 4,
+        remarks: index === 4 ? "Needs revision." : "Satisfactory."
       });
     });
   });
   await Grade.insertMany(gradeDocs);
 
   await Payroll.insertMany(
-    faculties.flatMap((faculty, facultyIndex) =>
-      ["2026-04", "2026-05", "2026-06"].map((month, monthIndex) => ({
-        facultyId: faculty._id,
+    faculty.flatMap((member, index) =>
+      ["2026-04", "2026-05"].map((month, monthIndex) => ({
+        facultyId: member._id,
         month,
-        amount: FACULTY_PROFILES[facultyIndex][2],
+        amount: FACULTY_SEED[index][3],
         status: monthIndex === 0 ? "paid" : "pending",
         paidOn: monthIndex === 0 ? asDate("2026-04-30") : undefined
       }))
     )
   );
 
-  const firstSection = classSections[0];
   await Notice.insertMany([
     {
-      title: "Welcome to Academic Year 2026-27",
-      body: "BCA and BSC classes have been scheduled. Students should check timetable and fee invoices.",
+      title: "Welcome to Full ERP Demo Data",
+      body: "BCA and BSC now have two semesters, two sections per semester, assigned faculty, fees, timetable, and student records.",
       audience: "all",
       createdBy: admin._id
     },
     {
-      title: "Face Enrollment Required",
-      body: "Students must complete face enrollment before using face attendance.",
+      title: "Fee Payment Reminder",
+      body: "Students with pending, partially paid, or overdue invoices should test fee submission from the student dashboard.",
       audience: "students",
       createdBy: admin._id
     },
     {
-      title: "Faculty Timetable Review",
-      body: "Faculty members should verify their assigned subjects and timetable slots.",
+      title: "Attendance Minimum 75 Percent",
+      body: "Faculty and students can use the sample attendance data to test low-attendance workflows and notices.",
+      audience: "students",
+      createdBy: admin._id
+    },
+    {
+      title: "Faculty Session Testing",
+      body: "Faculty can check assigned classes, start sessions, and review attendance from their dashboard.",
       audience: "faculty",
       createdBy: admin._id
     },
     {
-      title: "Section Orientation",
-      body: "Orientation for this section will be held in the assigned classroom.",
+      title: "BCA Sem 1-A Face Attendance Test",
+      body: "This class has a live timetable slot near the current time for easier face attendance testing.",
       audience: "class",
-      classSectionId: firstSection._id,
+      classSectionId: sectionByKey.get("BCA-S1-A").doc._id,
       createdBy: admin._id
     }
   ]);
@@ -667,69 +645,98 @@ const seed = async () => {
   const messageDocs = [
     {
       fromUserId: admin._id,
-      content: "Welcome to EduNexus360. Your course data, timetable, fees, and academic records are ready.",
-      isBroadcast: true
-    },
-    {
-      fromUserId: faculties[0]._id,
-      classSectionId: firstSection._id,
-      content: "Please review the first assignment and submit it before the due date.",
+      content: "Full test dataset loaded. Use seeded credentials to test all dashboards.",
       isBroadcast: true
     }
   ];
 
-  studentRows.slice(0, 20).forEach((row, index) => {
+  [...sectionByKey.values()].forEach((sectionRow) => {
+    const subject = subjectsByCourseSemester.get(courseSemesterKey(sectionRow.course, sectionRow.semester))[0];
     messageDocs.push({
-      fromUserId: faculties[index % faculties.length]._id,
-      toUserId: row.user._id,
-      content:
-        index % 2 === 0
-          ? "Your academic performance is good. Keep attending classes regularly."
-          : "Please improve attendance and complete pending submissions.",
+      fromUserId: subject.facultyId,
+      classSectionId: sectionRow.doc._id,
+      content: `${sectionRow.name}: Please check timetable, assignments, fees, and attendance records.`,
+      isBroadcast: true
+    });
+  });
+
+  students.slice(0, 8).forEach((student, index) => {
+    messageDocs.push({
+      fromUserId: admin._id,
+      toUserId: student._id,
+      content: index % 2 === 0 ? "Your attendance needs regular monitoring." : "Please verify your fee invoice.",
       isBroadcast: false
     });
   });
   await Message.insertMany(messageDocs);
 
-  await AdmissionApplication.insertMany(
-    COURSE_CONFIGS.flatMap((course, courseIndex) =>
-      Array.from({ length: 6 }, (_, index) => ({
-        applicantName: `Applicant ${course.code} ${index + 1}`,
-        email: `applicant.${course.code.toLowerCase()}.${index + 1}@demo.com`,
-        phone: `99999${courseIndex}${String(index + 1).padStart(4, "0")}`,
-        desiredDepartmentId: departmentByCourse.get(course.code)._id,
-        status: ["new", "reviewed", "accepted", "rejected"][index % 4],
-        notes: `Sample admission application for ${course.code}.`
-      }))
-    )
-  );
+  await AdmissionApplication.insertMany([
+    {
+      applicantName: "Tanya Kapoor",
+      email: "tanya.kapoor@example.com",
+      phone: "9999900011",
+      desiredDepartmentId: departmentByCode.get("BCA")._id,
+      status: "new",
+      notes: "Interested in BCA admission."
+    },
+    {
+      applicantName: "Mohit Saxena",
+      email: "mohit.saxena@example.com",
+      phone: "9999900012",
+      desiredDepartmentId: departmentByCode.get("BSC")._id,
+      status: "reviewed",
+      notes: "Documents verified."
+    },
+    {
+      applicantName: "Sara Fernandes",
+      email: "sara.fernandes@example.com",
+      phone: "9999900013",
+      desiredDepartmentId: departmentByCode.get("BCA")._id,
+      status: "accepted",
+      notes: "Accepted for counselling round."
+    },
+    {
+      applicantName: "Adil Khan",
+      email: "adil.khan@example.com",
+      phone: "9999900014",
+      desiredDepartmentId: departmentByCode.get("BSC")._id,
+      status: "rejected",
+      notes: "Incomplete documents."
+    }
+  ]);
 
   const counts = {
     admins: 1,
-    faculty: faculties.length,
-    courses: COURSE_CONFIGS.length,
-    semesters: semesters.length,
-    sections: classSections.length,
+    faculty: faculty.length,
     students: students.length,
+    departments: departments.length,
+    semesters: semesters.length,
+    classSections: classSections.length,
     subjects: subjects.length,
-    timetables: timetableDocs.length,
-    enrollments: studentRows.length,
-    attendance: attendanceDocs.length,
+    timetableSlots: timetables.length,
+    feePlans: semesterFees.length,
+    invoices: invoices.length,
+    payments: invoices.filter((invoice) => invoice.paidAmount > 0).length,
+    attendanceRecords: attendanceDocs.length,
     marks: marksDocs.length,
     assignments: assignments.length,
     submissions: submissionDocs.length,
     exams: exams.length,
     grades: gradeDocs.length,
-    invoices: invoices.length
+    notices: 5,
+    messages: messageDocs.length
   };
 
-  console.log("Full sample data inserted successfully.");
+  console.log("Full BCA/BSC sample data inserted successfully.");
   console.table(counts);
-  console.log("\nSeed complete.");
-  console.log("Set SEED_ADMIN_PASSWORD, SEED_FACULTY_PASSWORD, and SEED_STUDENT_PASSWORD before seeding if you need known login passwords.");
+  console.log("\nLogin credentials:");
+  console.log(`Admin:   admin@edunexus.com / ${PASSWORDS.admin}`);
+  console.log(`Faculty: priya.sharma@edunexus.com / ${PASSWORDS.faculty}`);
+  console.log(`Student: aarav.sharma.bcas1a.01@edunexus.com / ${PASSWORDS.student}`);
+  console.log("\nEvery faculty uses faculty123. Every student uses student123 unless env overrides were used.");
+  console.log("Face enrollment data was cleared. Re-enroll faces before testing face attendance.");
 
   await mongoose.disconnect();
-  console.log("Done.");
 };
 
 seed().catch(async (error) => {
@@ -737,7 +744,7 @@ seed().catch(async (error) => {
   try {
     await mongoose.disconnect();
   } catch {
-    // ignore disconnect errors
+    // Ignore disconnect errors during failure cleanup.
   }
   process.exit(1);
 });

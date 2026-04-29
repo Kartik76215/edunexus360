@@ -6,7 +6,8 @@ export const buildCrudRouter = (Model, options = {}) => {
   const {
     populate = "",
     defaultSort = { createdAt: -1 },
-    queryFilter = null
+    queryFilter = null,
+    responseSort = null
   } = options;
 
   router.get("/", async (req, res) => {
@@ -15,7 +16,7 @@ export const buildCrudRouter = (Model, options = {}) => {
       let q = Model.find(extraFilter).sort(defaultSort);
       if (populate) q = q.populate(populate);
       const rows = await q;
-      res.json(rows);
+      res.json(responseSort ? [...rows].sort(responseSort) : rows);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

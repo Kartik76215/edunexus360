@@ -26,7 +26,10 @@ function Login() {
       window.location.reload();
     } catch (err) {
       const message =
-        err?.response?.data?.message || err?.response?.data?.error || "Login failed.";
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        err?.message ||
+        "Login failed.";
       setError(message);
     } finally {
       setLoading(false);

@@ -3,6 +3,7 @@ import api from "./lib/api";
 import "./Dashboard.css";
 import AdminModules from "./AdminModules";
 import FaceEnrollmentPage from "./FaceEnrollmentPage";
+import { buildCourseOptions } from "./lib/courses";
 
 const createEmptyUserForm = () => ({
   name: "",
@@ -12,6 +13,7 @@ const createEmptyUserForm = () => ({
   designation: "",
   course: "",
   semester: 1,
+  section: "",
   rollNumber: "",
   universityRollNumber: ""
 });
@@ -49,8 +51,11 @@ const createBulkMarksForm = () => ({
 });
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+const sectionOptions = ["A", "B", "C", "D"];
 
 const getStudentSection = (student) => {
+  if (student.section) return String(student.section).trim().toUpperCase();
+
   const emailSection = String(student.email || "").match(/\.s\d+\.([a-z])\./i)?.[1];
   if (emailSection) return emailSection.toUpperCase();
 
@@ -88,6 +93,8 @@ function Dashboard() {
   const [users, setUsers] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [classSections, setClassSections] = useState([]);
+  const [timetables, setTimetables] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [marks, setMarks] = useState([]);
 
@@ -121,13 +128,13 @@ function Dashboard() {
   const [notice, setNotice] = useState({ type: "", message: "" });
   const [canFetchAllSubjects, setCanFetchAllSubjects] = useState(true);
 
-  const user = useMemo(() => {
+  const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("user") || "null");
     } catch {
       return null;
     }
-  }, []);
+  });
 
   const students = useMemo(
     () => users.filter((u) => u.role === "student").sort(compareStudents),
@@ -140,18 +147,8 @@ function Dashboard() {
   );
 
   const courseOptions = useMemo(() => {
-    const values = new Set();
-    departments.forEach((department) => {
-      if (department.code) values.add(String(department.code).trim().toUpperCase());
-    });
-    users.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    subjects.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    return [...values].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [departments, users, subjects]);
+    return buildCourseOptions({ departments, users, subjects, classSections, timetables });
+  }, [departments, users, subjects, classSections, timetables]);
 
   const selectedStudentData = useMemo(
     () => students.find((u) => u._id === selectedStudent) || null,
@@ -331,7 +328,20 @@ function Dashboard() {
     setLoading((prev) => ({ ...prev, users: true }));
     try {
       const res = await api.get(`/users`);
-      setUsers(res.data || []);
+      const rows = res.data || [];
+      setUsers(rows);
+
+      if (user?.email) {
+        const freshUser = rows.find((row) => row.email === user.email && row.role === user.role);
+        if (freshUser && freshUser._id !== user._id) {
+          localStorage.setItem("user", JSON.stringify(freshUser));
+          setUser(freshUser);
+        } else if (!freshUser) {
+          localStorage.removeItem("user");
+          setUser(null);
+          setError("Your login session no longer exists. Please login again.");
+        }
+      }
     } catch (err) {
       setError(extractError(err, "Failed to load users."));
     } finally {
@@ -341,8 +351,14 @@ function Dashboard() {
 
   const fetchDepartments = async () => {
     try {
-      const res = await api.get(`/departments`);
-      setDepartments(res.data || []);
+      const [departmentsRes, sectionsRes, timetablesRes] = await Promise.allSettled([
+        api.get(`/departments`),
+        api.get(`/class-sections`),
+        api.get(`/timetables`)
+      ]);
+      setDepartments(departmentsRes.status === "fulfilled" ? departmentsRes.value.data || [] : []);
+      setClassSections(sectionsRes.status === "fulfilled" ? sectionsRes.value.data || [] : []);
+      setTimetables(timetablesRes.status === "fulfilled" ? timetablesRes.value.data || [] : []);
     } catch (err) {
       setError(extractError(err, "Failed to load course list."));
     }
@@ -474,6 +490,7 @@ function Dashboard() {
         role: editingUser.role,
         designation: editingUser.designation,
         course: editingUser.course,
+        section: editingUser.role === "student" ? editingUser.section || "" : "",
         semester: Number(editingUser.semester) || 1,
         rollNumber: editingUser.rollNumber,
         universityRollNumber: editingUser.universityRollNumber
@@ -1069,6 +1086,19 @@ function Dashboard() {
                   ))}
                 </select>
                 {userForm.role === "student" && (
+                  <select
+                    value={userForm.section}
+                    onChange={(e) =>
+                      setUserForm((prev) => ({ ...prev, section: e.target.value }))
+                    }
+                  >
+                    <option value="">Select Section</option>
+                    {sectionOptions.map((section) => (
+                      <option key={section} value={section}>Section {section}</option>
+                    ))}
+                  </select>
+                )}
+                {userForm.role === "student" && (
                   <input
                     placeholder="Class Roll Number"
                     value={userForm.rollNumber}
@@ -1149,6 +1179,19 @@ function Dashboard() {
                     ))}
                   </select>
                   {editingUser.role === "student" && (
+                    <select
+                      value={editingUser.section || ""}
+                      onChange={(e) =>
+                        setEditingUser((prev) => ({ ...prev, section: e.target.value }))
+                      }
+                    >
+                      <option value="">Select Section</option>
+                      {sectionOptions.map((section) => (
+                        <option key={section} value={section}>Section {section}</option>
+                      ))}
+                    </select>
+                  )}
+                  {editingUser.role === "student" && (
                     <input
                       placeholder="Class Roll Number"
                       value={editingUser.rollNumber || ""}
@@ -1221,9 +1264,9 @@ function Dashboard() {
                         <div className="list-item" key={u._id}>
                           <div>
                             <strong>{u.name}</strong>
-                            <p>
-                              {u.email} | Class Roll: {u.rollNumber || "NA"} | Univ Roll: {u.universityRollNumber || "NA"}
-                            </p>
+                        <p>
+                              {u.email} | Section: {getStudentSection(u)} | Class Roll: {u.rollNumber || "NA"} | Univ Roll: {u.universityRollNumber || "NA"}
+                        </p>
                           </div>
                           <div className="action-row">
                             <button
@@ -1914,7 +1957,7 @@ function Dashboard() {
                     onClick={() =>
                       exportRowsToCsv(
                         "users.csv",
-                        ["Name", "Email", "Role", "Class Roll Number", "University Roll Number", "Course", "Semester", "Designation"],
+                        ["Name", "Email", "Role", "Class Roll Number", "University Roll Number", "Course", "Semester", "Section", "Designation"],
                         users.map((u) => [
                           u.name,
                           u.email,
@@ -1923,6 +1966,7 @@ function Dashboard() {
                           u.universityRollNumber || "",
                           u.course || "",
                           u.semester || "",
+                          getStudentSection(u),
                           u.designation || ""
                         ])
                       )

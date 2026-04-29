@@ -10,7 +10,17 @@ const noticeSchema = new mongoose.Schema(
       default: "notice"
     },
     eventDate: { type: Date },
-    imageData: { type: String, default: "" },
+    imageData: {
+      type: String,
+      default: "",
+      validate: {
+        validator(value) {
+          if (!["event", "workshop"].includes(this.noticeType)) return true;
+          return typeof value === "string" && value.startsWith("data:image/");
+        },
+        message: "Event and workshop communication must include a photo."
+      }
+    },
     imageName: { type: String, default: "" },
     audience: { type: String, enum: ["all", "students", "faculty", "staff", "class"], default: "all" },
     classSectionId: { type: mongoose.Schema.Types.ObjectId, ref: "ClassSection" },

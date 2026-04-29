@@ -71,28 +71,29 @@ as the default backend API URL. You can override it with:
 VITE_API_BASE_URL=your_backend_api_url
 ```
 
-## Data Scripts
+## Demo Data
 
-Clear all local app data:
-
-```bash
-cd backend
-npm run clear:data
-```
-
-Seed sample data:
+The seed script creates a complete demo dataset with BCA and BSC, two semesters, two sections per semester, 20 students per section, faculty, subjects, timetable entries, fees, attendance, marks, assignments, submissions, exams, grades, notices, and messages.
 
 ```bash
 cd backend
 npm run seed:reset
 ```
 
-If known seed login passwords are needed, set these environment variables before running the seed script:
+On PowerShell, set known demo passwords before seeding like this:
+
+```powershell
+$env:SEED_ADMIN_PASSWORD="your_admin_password"
+$env:SEED_FACULTY_PASSWORD="your_faculty_password"
+$env:SEED_STUDENT_PASSWORD="your_student_password"
+npm.cmd run seed:reset
+```
+
+Clear all local app data:
 
 ```bash
-SEED_ADMIN_PASSWORD=your_admin_password
-SEED_FACULTY_PASSWORD=your_faculty_password
-SEED_STUDENT_PASSWORD=your_student_password
+cd backend
+npm run clear:data
 ```
 
 ## Privacy Note

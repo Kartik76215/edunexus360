@@ -1,7 +1,7 @@
 import crypto from "crypto";
 
-const CHALLENGE_SECRET = process.env.FACE_CHALLENGE_SECRET || "face-challenge-secret";
-const FACE_DISTANCE_THRESHOLD = Number(process.env.FACE_DISTANCE_THRESHOLD || 0.52);
+const CHALLENGE_SECRET = process.env.FACE_CHALLENGE_SECRET || crypto.randomBytes(32).toString("hex");
+const FACE_DISTANCE_THRESHOLD = Number(process.env.FACE_DISTANCE_THRESHOLD || 0.62);
 const DEFAULT_WINDOW_MINUTES = Number(process.env.ATTENDANCE_WINDOW_MINUTES || 10);
 const FACE_ENGINE = String(process.env.FACE_ENGINE || "node").toLowerCase();
 const PYTHON_FACE_ENGINE_URL = process.env.PYTHON_FACE_ENGINE_URL || "http://127.0.0.1:8001";
@@ -196,17 +196,26 @@ export const validateLiveness = (liveness, challengeToken, userId, timetableId) 
 
   const blinkCount = Number(liveness.blinkCount);
   const headTurnAngle = Number(liveness.headTurnAngle);
-  if (Number.isNaN(blinkCount) || blinkCount < 1) {
-    return { ok: false, message: "Blink check failed." };
-  }
-  if (Number.isNaN(headTurnAngle) || headTurnAngle < 12) {
-    return { ok: false, message: "Head-turn liveness check failed." };
+  const stableFrames = Number(liveness.stableFrames);
+  const hasBlink = !Number.isNaN(blinkCount) && blinkCount >= 1;
+  const hasHeadTurn = !Number.isNaN(headTurnAngle) && headTurnAngle >= 8;
+  const hasStableLiveFace = !Number.isNaN(stableFrames) && stableFrames >= 3;
+  if (!hasBlink && !hasHeadTurn && !hasStableLiveFace) {
+    return {
+      ok: false,
+      message: "Liveness check failed. Keep your face clearly visible, blink once, or turn your head slightly."
+    };
   }
 
   const challenge = verifyChallenge(challengeToken, userId, timetableId);
   if (!challenge.ok) return challenge;
 
-  return { ok: true, blinkCount, headTurnAngle };
+  return {
+    ok: true,
+    blinkCount: Number.isNaN(blinkCount) ? 0 : blinkCount,
+    headTurnAngle: Number.isNaN(headTurnAngle) ? 0 : headTurnAngle,
+    stableFrames: Number.isNaN(stableFrames) ? 0 : stableFrames
+  };
 };
 
 const haversineMeters = (lat1, lng1, lat2, lng2) => {

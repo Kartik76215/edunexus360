@@ -33,7 +33,7 @@ app.use(
     origin: process.env.CORS_ORIGIN || "*"
   })
 );
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "20mb" }));
 
 connectDB();
 
@@ -63,6 +63,15 @@ app.use("/api/admissions", admissionRoutes);
 
 app.get("/", (req, res) => {
   res.send("API is working");
+});
+
+app.use((err, req, res, next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({
+      message: "Uploaded image is too large. Please choose a smaller event photo."
+    });
+  }
+  return next(err);
 });
 
 app.use((req, res) => {

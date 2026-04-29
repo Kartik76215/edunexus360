@@ -36,7 +36,7 @@ const sendFeeMailMerge = async (req, res) => {
     }
 
     const students = await User.find(studentFilter).select(
-      "_id name email course semester rollNumber universityRollNumber"
+      "_id name email course semester section rollNumber universityRollNumber"
     );
     if (students.length === 0) {
       return res.status(400).json({ message: "No students found for selected filters." });
@@ -77,6 +77,7 @@ const sendFeeMailMerge = async (req, res) => {
         universityRollNumber: student.universityRollNumber || "",
         course: student.course || "",
         semester: student.semester || "",
+        section: student.section || "",
         dueAmount: Number(totalDue.toFixed(2)),
         dueDate: dueDateText
       });
@@ -88,6 +89,8 @@ const sendFeeMailMerge = async (req, res) => {
         .replaceAll("{name}", student.name)
         .replaceAll("{course}", student.course || "")
         .replaceAll("{semester}", String(student.semester || ""))
+        .replaceAll("{section}", student.section || "")
+        .replaceAll("{rollNumber}", student.rollNumber || "")
         .replaceAll("{dueAmount}", totalDue.toFixed(2))
         .replaceAll("{dueDate}", dueDateText);
 
@@ -136,7 +139,7 @@ const sendAttendanceMailMerge = async (req, res) => {
     }
 
     const students = await User.find(studentFilter).select(
-      "_id name email course semester rollNumber universityRollNumber"
+      "_id name email course semester section rollNumber universityRollNumber"
     );
     if (students.length === 0) {
       return res.status(400).json({ message: "No students found for selected filters." });
@@ -169,6 +172,7 @@ const sendAttendanceMailMerge = async (req, res) => {
         universityRollNumber: student.universityRollNumber || "",
         course: student.course || "",
         semester: student.semester || "",
+        section: student.section || "",
         attendance: Number(pct.toFixed(1)),
         threshold: thresholdNumber,
         present: stats.present,
@@ -182,6 +186,8 @@ const sendAttendanceMailMerge = async (req, res) => {
         .replaceAll("{name}", student.name)
         .replaceAll("{course}", student.course || "")
         .replaceAll("{semester}", String(student.semester || ""))
+        .replaceAll("{section}", student.section || "")
+        .replaceAll("{rollNumber}", student.rollNumber || "")
         .replaceAll("{attendance}", pct.toFixed(1))
         .replaceAll("{threshold}", String(thresholdNumber));
 

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "./lib/api";
+import { buildCourseOptions } from "./lib/courses";
+import { sortTimetableSlots } from "./lib/timetable";
 
 const emptySemesterFeeForm = {
   title: "Semester Fee",
@@ -12,7 +14,9 @@ const emptySemesterFeeForm = {
 const emptyMailMergeForm = {
   course: "",
   semester: "",
-  threshold: 75
+  threshold: 75,
+  feeTemplate: "",
+  attendanceTemplate: ""
 };
 
 const emptyClassSectionForm = {
@@ -33,6 +37,17 @@ const emptyTimetableForm = {
   room: ""
 };
 
+const emptyNoticeForm = {
+  title: "",
+  body: "",
+  audience: "all",
+  classSectionId: "",
+  noticeType: "notice",
+  eventDate: "",
+  imageData: "",
+  imageName: ""
+};
+
 function AdminModules() {
   const [departments, setDepartments] = useState([]);
   const [admissions, setAdmissions] = useState([]);
@@ -48,15 +63,7 @@ function AdminModules() {
   const [timetables, setTimetables] = useState([]);
 
   const [deptForm, setDeptForm] = useState({ name: "", code: "" });
-  const [noticeForm, setNoticeForm] = useState({
-    title: "",
-    body: "",
-    audience: "all",
-    noticeType: "notice",
-    eventDate: "",
-    imageData: "",
-    imageName: ""
-  });
+  const [noticeForm, setNoticeForm] = useState(emptyNoticeForm);
   const [yearForm, setYearForm] = useState({ name: "", startDate: "", endDate: "" });
   const [semesterForm, setSemesterForm] = useState({
     name: "",
@@ -72,6 +79,8 @@ function AdminModules() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeModule, setActiveModule] = useState("academic");
+  const [noticeImageBusy, setNoticeImageBusy] = useState(false);
+  const [mailMergeSummary, setMailMergeSummary] = useState(null);
 
   const user = (() => {
     try {
@@ -87,24 +96,16 @@ function AdminModules() {
   );
 
   const courseOptions = useMemo(() => {
-    const values = new Set();
-    departments.forEach((department) => {
-      if (department.code) values.add(String(department.code).trim().toUpperCase());
-    });
-    users.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    subjects.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    semesterFees.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    return [...values].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [departments, users, subjects, semesterFees]);
+    return buildCourseOptions({ departments, users, subjects, semesterFees, classSections, timetables });
+  }, [departments, users, subjects, semesterFees, classSections, timetables]);
 
-  const showErr = (e, fallback = "Failed.") =>
-    setMsg(e?.response?.data?.message || e?.response?.data?.error || fallback);
+  const showErr = (e, fallback = "Failed.") => {
+    if (e?.response?.status === 413) {
+      setMsg("Uploaded image is too large. Please choose a smaller event photo.");
+      return;
+    }
+    setMsg(e?.response?.data?.message || e?.response?.data?.error || e?.message || fallback);
+  };
 
   const postWithRouteFallback = async (paths, payload) => {
     let lastError = null;
@@ -147,7 +148,7 @@ function AdminModules() {
       setUsers(u.data || []);
       setSubjects(s.data || []);
       setClassSections(cs.data || []);
-      setTimetables(tt.data || []);
+      setTimetables(sortTimetableSlots(tt.data || []));
     } catch (e) {
       showErr(e, "Failed to load institution modules.");
     } finally {
@@ -179,21 +180,58 @@ function AdminModules() {
   };
 
   const createNotice = async () => {
+    if (!user?._id) {
+      setMsg("Please login again before publishing communication.");
+      return;
+    }
+    if (!noticeForm.title.trim() || !noticeForm.body.trim()) {
+      setMsg("Title and information text are required.");
+      return;
+    }
+    if (noticeForm.audience === "class" && !noticeForm.classSectionId) {
+      setMsg("Select a class section for class communication.");
+      return;
+    }
+    if (
+      (noticeForm.noticeType === "event" || noticeForm.noticeType === "workshop") &&
+      !noticeForm.imageData
+    ) {
+      setMsg("Please choose a photo and wait until the preview appears before publishing.");
+      return;
+    }
+    if (noticeImageBusy) {
+      setMsg("Please wait for the event photo to finish processing.");
+      return;
+    }
+
     try {
-      await api.post("/notices", { ...noticeForm, createdBy: user?._id });
-      setNoticeForm({
-        title: "",
-        body: "",
-        audience: "all",
-        noticeType: "notice",
-        eventDate: "",
-        imageData: "",
-        imageName: ""
-      });
-      setMsg("Notice posted.");
+      const payload = {
+        ...noticeForm,
+        title: noticeForm.title.trim(),
+        body: noticeForm.body.trim(),
+        eventDate: noticeForm.eventDate || undefined,
+        classSectionId: noticeForm.audience === "class" ? noticeForm.classSectionId : undefined,
+        createdBy: user._id
+      };
+      await api.post("/notices", payload);
+      setNoticeForm(emptyNoticeForm);
+      setMsg("Communication published.");
       load();
     } catch (e) {
-      showErr(e);
+      showErr(e, "Failed to publish communication.");
+    }
+  };
+
+  const deleteNotice = async (id) => {
+    const ok = window.confirm("Delete this notice?");
+    if (!ok) return;
+
+    try {
+      await api.delete(`/notices/${id}`);
+      setMsg("Notice deleted.");
+      load();
+    } catch (e) {
+      showErr(e, "Failed to delete notice.");
     }
   };
 
@@ -208,21 +246,37 @@ function AdminModules() {
       event.target.value = "";
       return;
     }
-    if (file.size > 3 * 1024 * 1024) {
-      setMsg("Please upload an image smaller than 3 MB.");
-      event.target.value = "";
-      return;
-    }
-
+    setNoticeImageBusy(true);
     const reader = new FileReader();
     reader.onload = () => {
-      setNoticeForm((p) => ({
-        ...p,
-        imageData: String(reader.result || ""),
-        imageName: file.name
-      }));
+      const image = new Image();
+      image.onload = () => {
+        const maxWidth = 720;
+        const scale = Math.min(1, maxWidth / image.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const imageData = canvas.toDataURL("image/jpeg", 0.62);
+        setNoticeForm((p) => ({
+          ...p,
+          imageData,
+          imageName: file.name
+        }));
+        setMsg("Photo ready. You can publish now.");
+        setNoticeImageBusy(false);
+      };
+      image.onerror = () => {
+        setMsg("Failed to process the selected image.");
+        setNoticeImageBusy(false);
+      };
+      image.src = String(reader.result || "");
     };
-    reader.onerror = () => setMsg("Failed to read the selected image.");
+    reader.onerror = () => {
+      setMsg("Failed to read the selected image.");
+      setNoticeImageBusy(false);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -303,11 +357,21 @@ function AdminModules() {
       const payload = { fromUserId: user._id };
       if (mailMergeForm.course.trim()) payload.course = mailMergeForm.course.trim();
       if (String(mailMergeForm.semester).trim()) payload.semester = Number(mailMergeForm.semester);
+      if (mailMergeForm.feeTemplate.trim()) payload.template = mailMergeForm.feeTemplate.trim();
       const res = await postWithRouteFallback(
         ["/messages/mail-merge/fees", "/messages/mailmerge/fees"],
         payload
       );
-      setMsg(res?.data?.message || "Fee reminders sent.");
+      setMailMergeSummary({
+        type: "fees",
+        title: "Fee Due Students",
+        sent: Number(res?.data?.sent || 0),
+        recipients: res?.data?.recipients || []
+      });
+      setMsg(
+        res?.data?.message ||
+          `Fee reminders processed for ${Number(res?.data?.sent || 0)} students.`
+      );
       load();
     } catch (e) {
       showErr(e, "Failed to send fee reminders.");
@@ -326,11 +390,23 @@ function AdminModules() {
       };
       if (mailMergeForm.course.trim()) payload.course = mailMergeForm.course.trim();
       if (String(mailMergeForm.semester).trim()) payload.semester = Number(mailMergeForm.semester);
+      if (mailMergeForm.attendanceTemplate.trim()) {
+        payload.template = mailMergeForm.attendanceTemplate.trim();
+      }
       const res = await postWithRouteFallback(
         ["/messages/mail-merge/attendance", "/messages/mailmerge/attendance"],
         payload
       );
-      setMsg(res?.data?.message || "Attendance alerts sent.");
+      setMailMergeSummary({
+        type: "attendance",
+        title: "Below Attendance Threshold",
+        sent: Number(res?.data?.sent || 0),
+        recipients: res?.data?.recipients || []
+      });
+      setMsg(
+        res?.data?.message ||
+          `Attendance alerts processed for ${Number(res?.data?.sent || 0)} students.`
+      );
       load();
     } catch (e) {
       showErr(e, "Failed to send attendance alerts.");
@@ -648,26 +724,44 @@ function AdminModules() {
           <button className="primary-btn" type="button" onClick={createTimetableSlot}>Add Timetable Slot</button>
         </div>
 
-        <div className="list-wrap">
+        <div className="table-wrap">
           {timetables.length === 0 ? (
             <p>No timetable slots yet.</p>
           ) : (
-            timetables.map((slot) => (
-              <div className="list-item" key={slot._id}>
-                <div>
-                  <strong>{slot.classSectionId?.name || "Class Section"}</strong>
-                  <p>
-                    {slot.dayOfWeek} | {slot.startTime} - {slot.endTime} {slot.room ? `| Room ${slot.room}` : ""}
-                  </p>
-                  <p>
-                    {slot.subjectId?.name || "Subject"} | {slot.facultyId?.name || "Faculty"}
-                  </p>
-                </div>
-                <button className="danger-btn" type="button" onClick={() => deleteTimetableSlot(slot._id)}>
-                  Delete
-                </button>
-              </div>
-            ))
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Day</th>
+                  <th>Time</th>
+                  <th>Class</th>
+                  <th>Subject</th>
+                  <th>Faculty</th>
+                  <th>Room</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {timetables.map((slot) => (
+                  <tr key={slot._id}>
+                    <td>{slot.dayOfWeek}</td>
+                    <td>{slot.startTime} - {slot.endTime}</td>
+                    <td>{slot.classSectionId?.name || "Class Section"}</td>
+                    <td>{slot.subjectId?.name || "Subject"}</td>
+                    <td>{slot.facultyId?.name || "Faculty"}</td>
+                    <td>{slot.room || "-"}</td>
+                    <td>
+                      <button
+                        className="danger-btn table-action"
+                        type="button"
+                        onClick={() => deleteTimetableSlot(slot._id)}
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </article>
@@ -775,6 +869,20 @@ function AdminModules() {
             value={mailMergeForm.threshold}
             onChange={(e) => setMailMergeForm((p) => ({ ...p, threshold: e.target.value }))}
           />
+          <textarea
+            placeholder="Fee template (optional). Use {name}, {course}, {semester}, {section}, {rollNumber}, {dueAmount}, {dueDate}"
+            rows="3"
+            value={mailMergeForm.feeTemplate}
+            onChange={(e) => setMailMergeForm((p) => ({ ...p, feeTemplate: e.target.value }))}
+          />
+          <textarea
+            placeholder="Attendance template (optional). Use {name}, {course}, {semester}, {section}, {rollNumber}, {attendance}, {threshold}"
+            rows="3"
+            value={mailMergeForm.attendanceTemplate}
+            onChange={(e) =>
+              setMailMergeForm((p) => ({ ...p, attendanceTemplate: e.target.value }))
+            }
+          />
           <button className="secondary-btn" type="button" onClick={sendFeeMailMerge}>
             Send Fee Due Reminders
           </button>
@@ -782,6 +890,44 @@ function AdminModules() {
             Send Below-75% Alerts
           </button>
         </div>
+        <p className="helper-text">
+          Latest run shows the exact recipients below, so you can verify names before checking the
+          student inbox.
+        </p>
+        {mailMergeSummary ? (
+          <div className="list-wrap">
+            <div className="list-item">
+              <div>
+                <strong>{mailMergeSummary.title}</strong>
+                <p>
+                  Sent: {mailMergeSummary.sent} | Matching students:{" "}
+                  {mailMergeSummary.recipients.length}
+                </p>
+              </div>
+            </div>
+            {mailMergeSummary.recipients.length === 0 ? (
+              <p>No matching students for the current filter.</p>
+            ) : (
+              mailMergeSummary.recipients.map((row) => (
+                <div className="list-item" key={row.studentId}>
+                  <div>
+                    <strong>{row.name}</strong>
+                    <p>
+                      {row.email} | {row.course || "-"} | Sem {row.semester || "-"}
+                      {row.section ? ` | Sec ${row.section}` : ""}
+                    </p>
+                    <p>
+                      Roll: {row.rollNumber || "-"}
+                      {row.dueAmount !== undefined
+                        ? ` | Due: Rs ${row.dueAmount} by ${row.dueDate}`
+                        : ` | Attendance: ${row.attendance}% (Threshold ${row.threshold}%)`}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
       </article>
       )}
 
@@ -810,7 +956,19 @@ function AdminModules() {
             <option value="students">Students</option>
             <option value="faculty">Faculty</option>
             <option value="staff">Staff</option>
+            <option value="class">Class Section</option>
           </select>
+          {noticeForm.audience === "class" && (
+            <select
+              value={noticeForm.classSectionId}
+              onChange={(e) => setNoticeForm((p) => ({ ...p, classSectionId: e.target.value }))}
+            >
+              <option value="">Select Class Section</option>
+              {classSections.map((section) => (
+                <option key={section._id} value={section._id}>{section.name}</option>
+              ))}
+            </select>
+          )}
           {(noticeForm.noticeType === "event" || noticeForm.noticeType === "workshop") && (
             <input
               type="date"
@@ -825,17 +983,50 @@ function AdminModules() {
             rows="3"
           />
           <input type="file" accept="image/*" onChange={handleNoticeImageChange} />
-          <button className="primary-btn" type="button" onClick={createNotice}>
-            Publish {noticeForm.noticeType === "notice" ? "Notice" : noticeForm.noticeType}
+          <button className="primary-btn" type="button" onClick={createNotice} disabled={noticeImageBusy}>
+            {noticeImageBusy
+              ? "Processing Photo..."
+              : `Publish ${noticeForm.noticeType === "notice" ? "Notice" : noticeForm.noticeType}`}
           </button>
         </div>
         {noticeForm.imageData ? (
           <div className="notice-preview">
             <img src={noticeForm.imageData} alt={noticeForm.imageName || "Selected event"} />
-            <span>{noticeForm.imageName}</span>
+            <span>
+              Photo ready: {noticeForm.imageName} ({Math.round(noticeForm.imageData.length / 1024)} KB)
+            </span>
           </div>
-        ) : null}
+        ) : (
+          <p className="helper-text">No photo selected yet.</p>
+        )}
         <p className="helper-text">Total notices published: {notices.length}</p>
+        <div className="list-wrap">
+          {notices.length === 0 ? (
+            <p>No communication published yet.</p>
+          ) : (
+            notices.slice(0, 8).map((notice) => (
+              <div className="list-item notice-card" key={notice._id}>
+                {notice.imageData ? <img src={notice.imageData} alt={notice.imageName || notice.title} /> : null}
+                <div>
+                  <strong>{notice.title}</strong>
+                  <p>
+                    {(notice.noticeType || "notice").toUpperCase()} | {notice.audience}
+                    {notice.classSectionId?.name ? ` | ${notice.classSectionId.name}` : ""}
+                    {notice.eventDate ? ` | ${new Date(notice.eventDate).toLocaleDateString()}` : ""}
+                  </p>
+                  <p>{notice.body}</p>
+                </div>
+                <button
+                  className="danger-btn"
+                  type="button"
+                  onClick={() => deleteNotice(notice._id)}
+                >
+                  Delete
+                </button>
+              </div>
+            ))
+          )}
+        </div>
       </article>
       )}
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import api from "./lib/api";
 import "./Dashboard.css";
+import { sortTimetableSlots } from "./lib/timetable";
 import {
   captureFaceEmbeddingWithLiveness,
   startCamera,
@@ -9,7 +10,6 @@ import {
 
 function StudentDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
-  const [subjects, setSubjects] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [marks, setMarks] = useState([]);
   const [assignments, setAssignments] = useState([]);
@@ -20,6 +20,7 @@ function StudentDashboard() {
   const [notices, setNotices] = useState([]);
   const [messages, setMessages] = useState([]);
   const [submissionDrafts, setSubmissionDrafts] = useState({});
+  const [timetableRows, setTimetableRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState({ type: "", message: "" });
   const [faceClasses, setFaceClasses] = useState([]);
@@ -40,6 +41,7 @@ function StudentDashboard() {
   }, []);
 
   const setError = (message) => setNotice({ type: "error", message });
+  const asArray = (value) => (Array.isArray(value) ? value : []);
   const extractError = (err, fallback) =>
     err?.response?.data?.message || err?.response?.data?.error || err?.message || fallback;
 
@@ -102,78 +104,83 @@ function StudentDashboard() {
           getWithFallback([`/messages?toUserId=${user._id}`])
         ]);
 
-      if (attendanceRes.status === "fulfilled") setAttendance(attendanceRes.value.data || []);
+      if (attendanceRes.status === "fulfilled") setAttendance(asArray(attendanceRes.value.data));
       else {
         setAttendance([]);
         errors.push("attendance");
       }
 
-      if (marksRes.status === "fulfilled") setMarks(marksRes.value.data || []);
+      if (marksRes.status === "fulfilled") setMarks(asArray(marksRes.value.data));
       else {
         setMarks([]);
         errors.push("marks");
       }
 
-      if (invoicesRes.status === "fulfilled") setInvoices(invoicesRes.value.data || []);
+      if (invoicesRes.status === "fulfilled") setInvoices(asArray(invoicesRes.value.data));
       else {
         setInvoices([]);
         errors.push("fees");
       }
 
-      if (paymentsRes.status === "fulfilled") setPayments(paymentsRes.value.data || []);
+      if (paymentsRes.status === "fulfilled") setPayments(asArray(paymentsRes.value.data));
       else {
         setPayments([]);
         errors.push("payments");
       }
 
-      if (noticesRes.status === "fulfilled") {
-        setNotices((noticesRes.value.data || []).filter((n) => n.audience === "all" || n.audience === "students"));
-      } else {
-        setNotices([]);
-        errors.push("notices");
-      }
+      const allNotices = noticesRes.status === "fulfilled" ? asArray(noticesRes.value.data) : [];
+      if (noticesRes.status !== "fulfilled") errors.push("notices");
 
-      if (messagesRes.status === "fulfilled") setMessages(messagesRes.value.data || []);
+      if (messagesRes.status === "fulfilled") setMessages(asArray(messagesRes.value.data));
       else {
         setMessages([]);
         errors.push("messages");
       }
 
-      const enrollment = enrollRes.status === "fulfilled" ? (enrollRes.value.data || [])[0] : null;
+      const enrollment = enrollRes.status === "fulfilled" ? asArray(enrollRes.value.data)[0] : null;
       const classSectionId = enrollment?.classSectionId?._id;
+      setNotices(
+        allNotices.filter((n) => {
+          if (n.audience === "all" || n.audience === "students") return true;
+          if (n.audience !== "class" || !classSectionId) return false;
+          return String(n.classSectionId?._id || n.classSectionId || "") === String(classSectionId);
+        })
+      );
       const course = String(user.course || "").trim();
       const semester = Number(user.semester || 1);
+      const loadStudentTimetable = async () => {
+        if (classSectionId) {
+          const classRowsRes = await getWithFallback([`/timetables?classSectionId=${classSectionId}`]);
+          const classRows = asArray(classRowsRes?.data);
+          if (classRows.length > 0) return { data: classRows };
+        }
+        const studentRowsRes = await getWithFallback([`/timetables?studentId=${user._id}`]);
+        return { data: asArray(studentRowsRes?.data) };
+      };
 
       const [assignRes, subRes, subjectRes, timetableRes] = await Promise.allSettled([
         classSectionId ? getWithFallback([`/assignments?classSectionId=${classSectionId}`]) : Promise.resolve({ data: [] }),
         getWithFallback([`/submissions?studentId=${user._id}`]),
         course ? getWithFallback([`/subjects?course=${encodeURIComponent(course)}&semester=${semester}`]) : Promise.resolve({ data: [] }),
-        classSectionId ? getWithFallback([`/timetables?classSectionId=${classSectionId}`]) : Promise.resolve({ data: [] })
+        loadStudentTimetable()
       ]);
 
-      if (assignRes.status === "fulfilled") setAssignments(assignRes.value.data || []);
+      if (assignRes.status === "fulfilled") setAssignments(asArray(assignRes.value.data));
       else {
         setAssignments([]);
         errors.push("assignments");
       }
 
-      if (subRes.status === "fulfilled") setSubmissions(subRes.value.data || []);
+      if (subRes.status === "fulfilled") setSubmissions(asArray(subRes.value.data));
       else {
         setSubmissions([]);
         errors.push("submissions");
       }
 
-      const sRows = subjectRes.status === "fulfilled" ? subjectRes.value.data || [] : [];
-      const tRows = timetableRes.status === "fulfilled" ? timetableRes.value.data || [] : [];
+      const tRows = timetableRes.status === "fulfilled" ? asArray(timetableRes.value.data) : [];
       if (subjectRes.status === "rejected") errors.push("subjects");
-      if (timetableRes.status === "rejected" && classSectionId) errors.push("timetable");
-
-      setSubjects(
-        sRows.map((s) => {
-          const slots = tRows.filter((t) => t.subjectId?._id === s._id);
-          return { ...s, slots };
-        })
-      );
+      if (timetableRes.status === "rejected") errors.push("timetable");
+      setTimetableRows(sortTimetableSlots(tRows));
 
       if (errors.length > 0) {
         setNotice({
@@ -192,7 +199,7 @@ function StudentDashboard() {
       const classesRes = await getWithFallback([
         `/timetable/current?role=student&userId=${user._id}&today=true&includeChallenge=true`
       ]);
-      const list = classesRes?.data?.classes || [];
+      const list = asArray(classesRes?.data?.classes);
       setFaceClasses(list);
 
       const preferred =
@@ -275,10 +282,10 @@ function StudentDashboard() {
     try {
       setCapturingFaceAttendance(true);
       const capture = await captureFaceEmbeddingWithLiveness(videoRef.current, {
-        timeoutMs: 7000
+        timeoutMs: 4500
       });
       if (!capture?.liveness?.passed) {
-        setError("Liveness check failed. Blink once and turn head, then try again.");
+        setError("Face check needs a clearer live face. Blink once or turn your head slightly, then try again.");
         return;
       }
 
@@ -476,17 +483,36 @@ function StudentDashboard() {
         {activeTab === "academics" && (
           <section className="panel-stack">
             <article className="panel">
-              <h3>Current Subjects & Schedule</h3>
-              <div className="list-wrap">
-                {subjects.length === 0 ? <p>No subject data.</p> : subjects.map((s) => (
-                  <div className="list-item" key={s._id}>
-                    <div>
-                      <strong>{s.name}</strong>
-                      <p>{s.course} | Sem {s.semester}</p>
-                      <p>{s.slots?.length ? s.slots.map((x) => `${x.dayOfWeek} ${x.startTime}-${x.endTime}`).join(", ") : "No slots"}</p>
-                    </div>
-                  </div>
-                ))}
+              <h3>Current Timetable</h3>
+              <div className="table-wrap">
+                {timetableRows.length === 0 ? (
+                  <p>No timetable data.</p>
+                ) : (
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Class</th>
+                        <th>Room</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {timetableRows.map((slot) => (
+                        <tr key={slot._id}>
+                          <td>{slot.dayOfWeek}</td>
+                          <td>{slot.startTime} - {slot.endTime}</td>
+                          <td>{slot.subjectId?.name || "Subject"}</td>
+                          <td>{slot.facultyId?.name || "Faculty"}</td>
+                          <td>{slot.classSectionId?.name || "Class"}</td>
+                          <td>{slot.room || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </article>
             <article className="panel">
@@ -739,4 +765,3 @@ function StudentDashboard() {
 }
 
 export default StudentDashboard;
-

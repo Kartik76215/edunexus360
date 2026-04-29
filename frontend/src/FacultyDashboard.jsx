@@ -1,6 +1,8 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import api from "./lib/api";
 import "./Dashboard.css";
+import { sortTimetableSlots } from "./lib/timetable";
+import { buildCourseOptions } from "./lib/courses";
 
 const emptyAttendanceForm = {
   subjectId: "",
@@ -39,6 +41,8 @@ function FacultyDashboard() {
   const [liveFaceStats, setLiveFaceStats] = useState({ presentCount: 0, absentCount: 0 });
   const [myAssignments, setMyAssignments] = useState([]);
   const [classSections, setClassSections] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [semesterFees, setSemesterFees] = useState([]);
   const [sentMessages, setSentMessages] = useState([]);
   const [notices, setNotices] = useState([]);
   const [search, setSearch] = useState("");
@@ -60,26 +64,26 @@ function FacultyDashboard() {
   const [loading, setLoading] = useState({ users: false, subjects: false, action: false });
   const [supportsAggregateFetch, setSupportsAggregateFetch] = useState(true);
 
-  const user = useMemo(() => {
+  const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("user") || "null");
     } catch {
       return null;
     }
-  }, []);
+  });
 
   const students = useMemo(() => users.filter((u) => u.role === "student"), [users]);
 
   const courseOptions = useMemo(() => {
-    const values = new Set();
-    users.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
+    return buildCourseOptions({
+      departments,
+      users,
+      subjects,
+      semesterFees,
+      classSections,
+      timetables: myTimetable
     });
-    subjects.forEach((row) => {
-      if (row.course) values.add(String(row.course).trim().toUpperCase());
-    });
-    return [...values].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [users, subjects]);
+  }, [departments, users, subjects, semesterFees, classSections, myTimetable]);
 
   const classStudents = useMemo(
     () =>
@@ -161,7 +165,20 @@ function FacultyDashboard() {
     setLoading((prev) => ({ ...prev, users: true }));
     try {
       const res = await api.get("/users");
-      setUsers(res.data || []);
+      const rows = res.data || [];
+      setUsers(rows);
+
+      if (user?.email) {
+        const freshUser = rows.find((row) => row.email === user.email && row.role === user.role);
+        if (freshUser && freshUser._id !== user._id) {
+          localStorage.setItem("user", JSON.stringify(freshUser));
+          setUser(freshUser);
+        } else if (!freshUser) {
+          localStorage.removeItem("user");
+          setUser(null);
+          setError("Your login session no longer exists. Please login again.");
+        }
+      }
     } catch (err) {
       setError(extractError(err, "Failed to load users."));
     } finally {
@@ -222,18 +239,31 @@ function FacultyDashboard() {
   const fetchFacultyModules = async () => {
     if (!user?._id) return;
     try {
-      const [timetableRes, assignmentsRes, classRes, msgRes, noticesRes] = await Promise.all([
+      const [timetableRes, assignmentsRes, classRes, msgRes, noticesRes, deptRes, feeRes] = await Promise.all([
         api.get(`/timetables?facultyId=${user._id}`),
         api.get(`/assignments?facultyId=${user._id}`),
         api.get(`/class-sections`),
         api.get(`/messages?fromUserId=${user._id}`),
-        api.get(`/notices`)
+        api.get(`/notices`),
+        api.get(`/departments`),
+        api.get(`/semester-fees`)
       ]);
-      setMyTimetable(timetableRes.data || []);
+      setMyTimetable(sortTimetableSlots(timetableRes.data || []));
       setMyAssignments(assignmentsRes.data || []);
       setClassSections(classRes.data || []);
+      setDepartments(deptRes.data || []);
+      setSemesterFees(feeRes.data || []);
       setSentMessages(msgRes.data || []);
-      setNotices((noticesRes.data || []).filter((n) => n.audience === "all" || n.audience === "faculty"));
+      const facultyClassIds = new Set(
+        (timetableRes.data || []).map((slot) => String(slot.classSectionId?._id || slot.classSectionId || ""))
+      );
+      setNotices(
+        (noticesRes.data || []).filter((n) => {
+          if (n.audience === "all" || n.audience === "faculty") return true;
+          if (n.audience !== "class") return false;
+          return facultyClassIds.has(String(n.classSectionId?._id || n.classSectionId || ""));
+        })
+      );
     } catch {
       // soft-fail to keep panel usable
     }
@@ -701,23 +731,32 @@ function FacultyDashboard() {
           <section className="panel-stack">
             <article className="panel">
               <h2>My Timetable</h2>
-              <div className="list-wrap">
+              <div className="table-wrap">
                 {myTimetable.length === 0 ? (
                   <p>No timetable slots assigned.</p>
                 ) : (
-                  myTimetable.map((slot) => (
-                    <div className="list-item" key={slot._id}>
-                      <div>
-                        <strong>{slot.subjectId?.name || "Subject"}</strong>
-                        <p>
-                          {slot.dayOfWeek} | {slot.startTime} - {slot.endTime}
-                        </p>
-                        <p>
-                          {slot.classSectionId?.name || "Class"} {slot.room ? `| Room ${slot.room}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                  ))
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Class</th>
+                        <th>Room</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {myTimetable.map((slot) => (
+                        <tr key={slot._id}>
+                          <td>{slot.dayOfWeek}</td>
+                          <td>{slot.startTime} - {slot.endTime}</td>
+                          <td>{slot.subjectId?.name || "Subject"}</td>
+                          <td>{slot.classSectionId?.name || "Class"}</td>
+                          <td>{slot.room || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             </article>
@@ -859,18 +898,29 @@ function FacultyDashboard() {
             {myTimetable.length > 0 ? (
               <article className="panel">
                 <h3>Weekly Assigned Timetable</h3>
-                <div className="list-wrap">
-                  {myTimetable.map((slot) => (
-                    <div className="list-item" key={slot._id}>
-                      <div>
-                        <strong>{slot.subjectId?.name || "Subject"}</strong>
-                        <p>
-                          {slot.dayOfWeek} | {slot.startTime} - {slot.endTime}
-                          {slot.room ? ` | Room ${slot.room}` : ""}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Class</th>
+                        <th>Room</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {myTimetable.map((slot) => (
+                        <tr key={slot._id}>
+                          <td>{slot.dayOfWeek}</td>
+                          <td>{slot.startTime} - {slot.endTime}</td>
+                          <td>{slot.subjectId?.name || "Subject"}</td>
+                          <td>{slot.classSectionId?.name || "Class"}</td>
+                          <td>{slot.room || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </article>
             ) : null}
